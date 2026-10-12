@@ -9,22 +9,32 @@
 > (the voice "brain"). It needs the custom Voice PE **firmware** to connect to it — the
 > stock Home Assistant voice pipeline won't talk to this add-on. You must set up both:
 > - 🧠 **Backend add-on** (this repo) — runs inside Home Assistant
-> - 🔌 **Device firmware** → **[xandervanerven/home-assistant-voice-pe](https://github.com/xandervanerven/home-assistant-voice-pe)** (flashed onto the Voice PE)
+> - 🔌 **Device firmware** → **[SandorDrift23/home-assistant-voice-pe](https://github.com/SandorDrift23/home-assistant-voice-pe/tree/feature/gpt-live-voice-pe)**, branch `feature/gpt-live-voice-pe` (flashed onto the Voice PE)
 >
-> 📖 New here? The full **[INSTALL guide](https://github.com/xandervanerven/home-assistant-voice-pe/blob/main/INSTALL.md)** walks through both halves, step by step.
+> 📖 New here? Start with that firmware branch. Leave `barge_in` false.
 
 A Home Assistant **add-on** that turns a [Voice PE](https://www.home-assistant.io/voice-pe/)
-device into a low-latency voice assistant built on **OpenAI's Realtime API**
-(`gpt-realtime-2`). The device streams microphone audio to this add-on over a
-plain WebSocket; the add-on runs the Realtime speech-to-speech session and
-controls Home Assistant through the official
+device into a low-latency voice assistant. The default session is **OpenAI
+`gpt-realtime-2`**. Set **Voice provider** to `gpt_live` to use **`gpt-live-1`**
+instead. The device streams microphone audio to this add-on over a plain
+WebSocket; the add-on runs the speech-to-speech session and controls Home
+Assistant through the official
 **[Home Assistant MCP Server](https://www.home-assistant.io/integrations/mcp_server/)**
-integration. STT, TTS and the LLM all run in the Realtime session — there is no
-Home Assistant `voice_assistant` pipeline on the audio path.
+integration. STT, TTS and the LLM all run in that session — there is no Home
+Assistant `voice_assistant` pipeline on the audio path.
+
+`gpt-live-1` can listen while it speaks. The Voice PE does not do that yet.
+With `barge_in` false the microphone closes during playback, and a reply is
+interrupted with "stop" or the center button. An echo recording, off by
+default, is how we decide whether the microphone can stay open. Do not turn
+`barge_in` on before that recording shows the uplink is intelligible. Play the
+test through a powered speaker on the Voice PE 3.5 mm jack, away from the
+microphones.
 
 > Fork of **[fjfricke/ha-openai-realtime](https://github.com/fjfricke/ha-openai-realtime)**,
-> retargeted at `gpt-realtime-2`, the official HA MCP Server, optional web search,
-> and the **Voice PE thin-client firmware** (a separate repo — see below).
+> with `gpt-realtime-2` kept as the default and `gpt-live-1` added as a separate
+> provider. Home control uses the official HA MCP Server. The Voice PE firmware
+> is the branch linked above.
 
 ## Repository layout
 
@@ -36,13 +46,14 @@ Home Assistant `voice_assistant` pipeline on the audio path.
   - [`CHANGELOG.md`](openai_realtime_voice_agent/CHANGELOG.md) — what changed per version.
 
 The **device firmware** lives in its own repository —
-**[xandervanerven/home-assistant-voice-pe](https://github.com/xandervanerven/home-assistant-voice-pe)**
+**[SandorDrift23/home-assistant-voice-pe](https://github.com/SandorDrift23/home-assistant-voice-pe/tree/feature/gpt-live-voice-pe)**,
+branch `feature/gpt-live-voice-pe`
 (a custom `va_client` ESPHome component, specific to the Voice PE hardware).
 
 ## Install
 
 1. In Home Assistant, open **Settings → Add-ons → Add-on store → ⋮ → Repositories**
-   and add `https://github.com/xandervanerven/ha-openai-realtime`.
+   and add `https://github.com/SandorDrift23/ha-openai-realtime`.
 2. Install **OpenAI Realtime 2 Voice Agent**. It ships with no prebuilt `image:`,
    so Home Assistant builds it locally on first install (a few minutes on a Pi).
 3. Configure the add-on and flash the companion firmware — see
@@ -54,15 +65,18 @@ isn't needed for a normal local-build install.)
 ## How it works
 
 ```
-Voice PE (ESP32-S3)  ──WS, 16 kHz PCM up──▶   this add-on    ──▶  OpenAI Realtime API
-  va_client firmware  ◀──── 24 kHz PCM down──  (Pipecat)          (gpt-realtime-2)
+Voice PE (ESP32-S3)  ──WS, 16 kHz PCM up──▶   this add-on    ──▶  gpt-realtime-2
+  va_client firmware  ◀──── 24 kHz PCM down──                     or gpt-live-1
                                                    │ tools
                                                    ▼
                                          Home Assistant MCP Server
 ```
 
 The device does wake-word detection and XMOS audio cleanup locally and is a thin
-client. Interrupt a reply with the **"stop"** word or the center button.
+client. It does not hold an API key. Interrupt a reply with the **"stop"** word
+or the center button. `gpt-realtime-2` goes through Pipecat. `gpt-live-1` uses
+OpenAI's Live WebSocket. In GPT-Live mode, Home Assistant actions are spoken
+only after the MCP server returns the result.
 
 ## Known limitations
 
