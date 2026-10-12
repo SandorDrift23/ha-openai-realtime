@@ -51,6 +51,31 @@ def get_web_search_tool_definition() -> Dict[str, Any]:
     }
 
 
+async def run_web_search(api_key: str, model: str, query: str) -> str:
+    """One short spoken answer from the Responses web_search tool."""
+    query = (query or "").strip()
+    logger.info(f"🔎 web_search called: {query!r} (model={model})")
+    if not query:
+        return "No search query was provided."
+    client = AsyncOpenAI(api_key=api_key)
+    try:
+        response = await client.responses.create(
+            model=model,
+            tools=[{"type": "web_search"}],
+            input=(
+                "Answer in at most 2 short sentences suitable for being read "
+                "aloud, in the same language as the question. Do not include "
+                "URLs, citations, or markdown. Question: " + query
+            ),
+        )
+        answer = (getattr(response, "output_text", None) or "").strip()
+        logger.info(f"🔎 web_search answer: {answer[:200]}")
+        return answer or "Nothing useful came back from the search."
+    except Exception as exc:
+        logger.error(f"❌ web_search failed: {exc}", exc_info=True)
+        return "The web search failed."
+
+
 def create_web_search_tool_handler(
     api_key: str, model: str
 ) -> Callable[["FunctionCallParams"], Awaitable[None]]:

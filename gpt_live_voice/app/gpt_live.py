@@ -14,6 +14,8 @@ import asyncio
 import base64
 import json
 import logging
+import struct
+import time
 from typing import Awaitable, Callable, Optional
 
 from app.echo_probe import EchoProbe
@@ -25,6 +27,12 @@ LIVE_URL = "wss://api.openai.com/v1/live/sessions"
 LIVE_MODEL = "gpt-live-1"
 LIVE_SAMPLE_RATE = 24000
 CLOSE_TIMEOUT_S = 15.0
+# Half duplex: the model must not hear the mic until the user has actually
+# spoken and paused. Forwarding the open follow-up window makes gpt-live-1
+# answer silence, the device closes the mic, and the cycle repeats.
+SPEECH_RMS = 450
+MIN_SPEECH_MS = 200
+END_SILENCE_MS = 600
 
 STOP_INSTRUCTION = (
     "The user stopped you. Stop speaking now and wait silently for the next "
@@ -32,12 +40,70 @@ STOP_INSTRUCTION = (
 )
 
 LIVE_INSTRUCTION_SUFFIX = (
-    " You are in a live voice session. You do not call home-control tools "
-    "yourself. A delegation brings Home Assistant results back as commentary. "
-    "Speak an action as done only after that commentary confirms it. If the "
-    "device or action is unclear, ask one short question. Keep replies short "
-    "enough to say aloud."
+    " You are in a live voice session. You do not call tools yourself. A "
+    "delegation brings Home Assistant results and web lookups back as "
+    "commentary. Stay silent while that lookup runs, then speak only what "
+    "the commentary says. Speak an action as done only after that commentary "
+    "confirms it. If the device or action is unclear, ask one short question. "
+    "Keep replies short enough to say aloud."
 )
+
+def _rms(pcm: bytes) -> float:
+    count = len(pcm) // 2
+    if count == 0:
+        return 0.0
+    samples = struct.unpack(f"<{count}h", pcm[: count * 2])
+    total = 0
+    for sample in samples:
+        total += sample * sample
+    return (total / count) ** 0.5
+
+
+class SpeechGate:
+    """Hold microphone audio until a utterance has started and then paused."""
+
+    def __init__(
+        self,
+        sample_rate: int = LIVE_SAMPLE_RATE,
+        speech_rms: float = SPEECH_RMS,
+        min_speech_ms: int = MIN_SPEECH_MS,
+        end_silence_ms: int = END_SILENCE_MS,
+    ):
+        self._speech_rms = speech_rms
+        self._min_speech_bytes = int(sample_rate * 2 * min_speech_ms / 1000)
+        self._end_silence_s = end_silence_ms / 1000
+        self.reset()
+
+    def reset(self) -> None:
+        self._buf = bytearray()
+        self._speech_bytes = 0
+        self._silence_at: Optional[float] = None
+        self.heard_speech = False
+
+    def push(self, pcm: bytes, now: float) -> Optional[bytes]:
+        """Return one finished utterance, or None while still listening."""
+        if not pcm:
+            return None
+        if _rms(pcm) >= self._speech_rms:
+            self.heard_speech = True
+            self._silence_at = None
+            self._buf.extend(pcm)
+            self._speech_bytes += len(pcm)
+            return None
+        if not self.heard_speech:
+            return None
+        if self._silence_at is None:
+            self._silence_at = now
+        self._buf.extend(pcm)
+        if (now - self._silence_at) < self._end_silence_s:
+            return None
+        if self._speech_bytes < self._min_speech_bytes:
+            self.reset()
+            return None
+        utterance = bytes(self._buf)
+        self.reset()
+        return utterance
+
 
 SendFn = Callable[[dict], Awaitable[None]]
 PhaseFn = Callable[[str], Awaitable[None]]
@@ -112,6 +178,10 @@ class GptLiveSession:
         self._reply_mute = False
         self._input_muted = True
         self._drop_output = False
+        self._armed = False
+        self._hold_output = False
+        self._gate = SpeechGate()
+        self._now = time.monotonic
         self._started = False
         self._finished = False
         self._idle_task: Optional[asyncio.Task] = None
@@ -194,24 +264,31 @@ class GptLiveSession:
         self._drop_output = False
         self._reply_mute = False
         self._hold = None
-        self._input_muted = False
-        await self._control_input(muted=False)
+        self._armed = False
+        self._hold_output = False
+        self._input_muted = True
+        self._gate.reset()
+        await self._control_input(muted=True)
 
     async def on_uplink(self, pcm: bytes) -> None:
-        """Forward 24 kHz PCM, or only record it while a reply is playing."""
+        """Forward a finished utterance. Silence and playback leak stay local."""
         if self._echo is not None and pcm:
             self._echo.record("uplink", pcm)
         if self._hold == "interrupt" or self._reply_mute or self._phase == "replying":
             return
-        if self._input_muted:
-            self._input_muted = False
-            await self._control_input(muted=False)
-        if self._phase != "listening":
+        utterance = self._gate.push(pcm, self._now())
+        if self._gate.heard_speech and self._phase != "listening":
             await self._set_phase("listening")
-        await self._append_audio(pcm)
+        if not utterance:
+            return
+        self._armed = True
+        self._input_muted = False
+        await self._control_input(muted=False)
+        await self._append_audio(utterance)
 
     async def on_flush(self) -> None:
         self._odd = b""
+        self._gate.reset()
         self._input_muted = True
         await self._control_input(muted=True)
 
@@ -219,9 +296,12 @@ class GptLiveSession:
         self._drop_output = True
         self._hold = "interrupt"
         self._reply_mute = False
+        self._armed = False
+        self._hold_output = False
         self._input_muted = True
         self._cancel_idle()
         self._odd = b""
+        self._gate.reset()
         await self._control_input(muted=True)
         if self.ready:
             await self._emit({
@@ -287,7 +367,7 @@ class GptLiveSession:
         except (ValueError, TypeError):
             logger.warning("GPT-Live output audio was not valid base64")
             return
-        if not pcm:
+        if not pcm or not self._armed or self._hold_output:
             return
         if self._echo is not None:
             self._echo.record("downlink", pcm)
@@ -308,12 +388,14 @@ class GptLiveSession:
         if not self._delegator.begin(delegation_id):
             logger.info("GPT-Live duplicate delegation %s ignored", delegation_id)
             return
+        self._hold_output = True
         if self._phase != "replying":
             await self._set_phase("thinking")
         try:
             calls, question = await self._delegator.plan(self.transcript.text())
         except Exception as exc:
             logger.warning("GPT-Live delegation planner failed: %s", exc)
+            self._hold_output = False
             await self._append_context(
                 "session.commentary.append",
                 delegation_id,
@@ -321,6 +403,7 @@ class GptLiveSession:
             )
             return
         if not calls:
+            self._hold_output = False
             if question:
                 await self._append_context("session.commentary.append", delegation_id, question)
             return
@@ -337,6 +420,7 @@ class GptLiveSession:
                 "Home Assistant did not confirm that action. "
                 "Say that it could not be confirmed."
             )
+        self._hold_output = False
         await self._append_context("session.commentary.append", delegation_id, commentary)
 
     async def _append_context(self, event_type: str, delegation_id: str, content: str) -> None:
@@ -401,7 +485,10 @@ class GptLiveSession:
         if self._drop_output:
             return
         self._reply_mute = False
+        self._armed = False
         self._input_muted = True
+        self._gate.reset()
+        await self._control_input(muted=True)
         await self._set_phase("idle")
 
 

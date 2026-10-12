@@ -1,4 +1,4 @@
-# OpenAI Realtime 2 Voice Agent
+# GPT-Live Voice
 
 Talk to your home with OpenAI speech-to-speech. The default session is
 **`gpt-realtime-2`**. Set **Voice provider** to `gpt_live` to use **`gpt-live-1`**
@@ -43,7 +43,9 @@ drop-in for the stock HA voice pipeline.
 
 1. Add this repository to Home Assistant (Settings → Add-ons → Add-on Store → ⋮ →
    **Repositories**): `https://github.com/SandorDrift23/ha-openai-realtime`
-2. Install **OpenAI Realtime 2 Voice Agent** and open its **Configuration** tab.
+2. Install **GPT-Live Voice** and open its **Configuration** tab. Uninstall
+   **OpenAI Realtime 2 Voice Agent** first if it is still installed. The slug
+   changed, so this is a new add-on rather than an update.
 3. Paste your **OpenAI API key**, install the HA **MCP Server** integration, expose
    a few entities to Assist, and **Start** the add-on.
 4. Flash the **Voice PE firmware** from

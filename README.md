@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="openai_realtime_voice_agent/icon.png" alt="OpenAI Realtime 2 Voice Agent — a stylised Voice PE" width="160"/>
+  <img src="gpt_live_voice/icon.png" alt="GPT-Live Voice — a stylised Voice PE" width="160"/>
 </p>
 
-# OpenAI Realtime 2 Voice Agent (Home Assistant Voice PE)
+# GPT-Live Voice (Home Assistant Voice PE)
 
 > [!IMPORTANT]
 > **This is 1 of 2 repos — you need both halves.** This repo is the **backend add-on**
@@ -39,12 +39,12 @@ microphones.
 
 ## Repository layout
 
-- **[`openai_realtime_voice_agent/`](openai_realtime_voice_agent/)** — the Home
+- **[`gpt_live_voice/`](gpt_live_voice/)** — the Home
   Assistant add-on (Python / [Pipecat](https://github.com/pipecat-ai/pipecat)).
   This is the only thing you install.
-  - [`DOCS.md`](openai_realtime_voice_agent/DOCS.md) — full setup: OpenAI key, the
+  - [`DOCS.md`](gpt_live_voice/DOCS.md) — full setup: OpenAI key, the
     Home Assistant MCP connection, recommended settings, web search, all options.
-  - [`CHANGELOG.md`](openai_realtime_voice_agent/CHANGELOG.md) — what changed per version.
+  - [`CHANGELOG.md`](gpt_live_voice/CHANGELOG.md) — what changed per version.
 
 The **device firmware** lives in its own repository —
 **[SandorDrift23/home-assistant-voice-pe](https://github.com/SandorDrift23/home-assistant-voice-pe/tree/feature/gpt-live-voice-pe)**,
@@ -55,10 +55,10 @@ branch `feature/gpt-live-voice-pe`
 
 1. In Home Assistant, open **Settings → Add-ons → Add-on store → ⋮ → Repositories**
    and add `https://github.com/SandorDrift23/ha-openai-realtime`.
-2. Install **OpenAI Realtime 2 Voice Agent**. It ships with no prebuilt `image:`,
+2. Install **GPT-Live Voice**. It ships with no prebuilt `image:`,
    so Home Assistant builds it locally on first install (a few minutes on a Pi).
 3. Configure the add-on and flash the companion firmware — see
-   [`openai_realtime_voice_agent/DOCS.md`](openai_realtime_voice_agent/DOCS.md).
+   [`gpt_live_voice/DOCS.md`](gpt_live_voice/DOCS.md).
 
 (An optional GitHub Actions workflow can publish container images to ghcr.io; it
 isn't needed for a normal local-build install.)

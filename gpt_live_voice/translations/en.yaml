@@ -34,19 +34,18 @@ configuration:
   voice_provider:
     name: "🗣️ Model & voice · Voice provider"
     description: >-
-      openai_realtime (default) keeps the current gpt-realtime-2 conversation.
-      gpt_live uses OpenAI gpt-live-1 on a separate session and ignores the
-      Realtime model below. Home control in gpt_live goes through Assist MCP
-      after Home Assistant returns a result. Leave this on openai_realtime
-      unless you are testing GPT-Live.
+      gpt_live (default) is the voice path: OpenAI gpt-live-1. The Realtime
+      model setting does not apply to it. openai_realtime is the previous
+      engine. Home control runs only after Home Assistant returns a result.
+      Questions such as weather use web search.
   openai_model:
-    name: "🗣️ Model & voice · Realtime model"
+    name: "⚙️ Advanced · Legacy Realtime model"
     description: >-
-      The OpenAI model that listens and talks. gpt-realtime-2 (default) is the
-      newest and smartest. gpt-realtime-mini is noticeably cheaper but less
-      capable. Want a model that's not listed? Pick "custom", then enable
-      "Show unused optional configuration options" at the bottom of this page
-      to reveal the custom field.
+      Used only when Voice provider is openai_realtime. gpt-live-1 ignores
+      this. gpt-realtime-2 is the newest of that older engine.
+      gpt-realtime-mini is cheaper and less capable. For an unlisted model
+      pick "custom", then enable "Show unused optional configuration options"
+      at the bottom of this page.
   openai_model_custom:
     name: "🗣️ Model & voice · Model (custom)"
     description: >-

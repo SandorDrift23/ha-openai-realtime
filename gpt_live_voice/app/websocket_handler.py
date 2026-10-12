@@ -734,8 +734,7 @@ class WebSocketHandler:
         ])
         runner = PipelineRunner()
         task = PipelineTask(pipeline, idle_timeout_secs=None, cancel_on_idle_timeout=False)
-        asyncio.create_task(runner.run(task))
-        logger.info("✅ GPT-Live pipeline started")
+        logger.info("✅ GPT-Live pipeline built")
         return pipeline, runner, task
     
     def extract_client_id(self, websocket) -> str:

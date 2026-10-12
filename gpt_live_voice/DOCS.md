@@ -1,4 +1,4 @@
-# OpenAI Realtime 2 Voice Agent — Documentation
+# GPT-Live Voice — Documentation
 
 This add-on runs an **OpenAI `gpt-realtime-2`** voice session and bridges it to Home
 Assistant control and web search. It is the backend half of a two-part project; the
@@ -19,7 +19,10 @@ Voice PE device  ──WebSocket──▶  this add-on  ──▶  OpenAI Realti
 1. In Home Assistant go to **Settings → Add-ons → Add-on Store**.
 2. Top-right **⋮ → Repositories**, add:
    `https://github.com/SandorDrift23/ha-openai-realtime`
-3. Find **OpenAI Realtime 2 Voice Agent** in the store and click **Install**.
+3. Find **GPT-Live Voice** in the store and click **Install**.
+   If you still have **OpenAI Realtime 2 Voice Agent** installed, uninstall it
+   first. The slug changed, so Home Assistant will not offer this as an update
+   of that add-on.
    (There is no prebuilt image — Home Assistant builds it locally the first time,
    which takes a few minutes.)
 4. Open the add-on's **Configuration** tab to set it up (next sections).

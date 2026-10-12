@@ -8,6 +8,7 @@ playback, transcripts, follow-up audio, session close, and barge-in left off.
 import asyncio
 import base64
 import json
+import struct
 import unittest
 from pathlib import Path
 
@@ -46,6 +47,21 @@ class _Schema:
 
 def _pcm() -> bytes:
     return b"\x01\x00\x02\x00"
+
+
+def _tone(ms: int, amplitude: int = 8000) -> bytes:
+    count = max(1, int(LIVE_SAMPLE_RATE * ms / 1000))
+    return struct.pack(f"<{count}h", *([amplitude] * count))
+
+
+async def _say(session) -> None:
+    """Feed a short loud utterance and the pause that commits it."""
+    clock = {"t": 0.0}
+    session._now = lambda: clock["t"]
+    await session.on_uplink(_tone(250))
+    await session.on_uplink(_tone(20, 0))
+    clock["t"] = 0.7
+    await session.on_uplink(_tone(20, 0))
 
 
 class SessionHarness:
@@ -123,10 +139,10 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         await self.session.start()
         await self.session.handle_server_event({"type": "session.started", "session": {"id": "sess_test"}})
         await self.session.on_wake()
-        await self.session.on_uplink(_pcm())
+        await _say(self.session)
         self.assertIn("session.input_audio.append", self.harness.types())
         appended = [e for e in self.harness.sent if e["type"] == "session.input_audio.append"]
-        self.assertEqual(base64.b64decode(appended[-1]["audio"]), _pcm())
+        self.assertGreater(len(base64.b64decode(appended[-1]["audio"])), 1000)
 
         await self.session.handle_server_event({"type": "session.input_transcript.delta", "delta": "lamp"})
         reply = b"\x03\x00\x04\x00"
@@ -151,9 +167,19 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         await self.session._idle_task
         self.assertEqual(self.harness.phases[-1], "idle")
 
+        before_follow = len(appended)
         await self.session.on_uplink(b"\x07\x00\x08\x00")
         appended = [e for e in self.harness.sent if e["type"] == "session.input_audio.append"]
-        self.assertEqual(base64.b64decode(appended[-1]["audio"]), b"\x07\x00\x08\x00")
+        self.assertEqual(len(appended), before_follow)
+        played = len(self.harness.played)
+        await self.session.handle_server_event({
+            "type": "session.output_audio.delta",
+            "delta": base64.b64encode(b"\x09\x00").decode("ascii"),
+        })
+        self.assertEqual(len(self.harness.played), played)
+        await _say(self.session)
+        appended = [e for e in self.harness.sent if e["type"] == "session.input_audio.append"]
+        self.assertGreater(len(appended), before_follow)
         self.assertEqual(self.harness.phases[-1], "listening")
 
         closing = asyncio.create_task(self.session.on_conversation_end())
@@ -176,8 +202,8 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         await self.session.start()
         await self.session.handle_server_event({"type": "session.started"})
         await self.session.on_wake()
-        await self.session.on_uplink(_pcm())
-        await self.session.on_uplink(_pcm())
+        await _say(self.session)
+        await _say(self.session)
         self.assertFalse(self.session.ready)
         self.assertEqual(lost["n"], 1)
         self.assertFalse(any(event["type"] == "session.input_audio.append" for event in self.harness.sent))
@@ -239,6 +265,7 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         await self.session.start()
         await self.session.handle_server_event({"type": "session.started"})
         await self.session.on_wake()
+        await _say(self.session)
         await self.session.handle_server_event({
             "type": "session.output_audio.delta",
             "delta": base64.b64encode(b"\x01\x00").decode("ascii"),
@@ -319,6 +346,7 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
             await harness.session.start()
             await harness.session.handle_server_event({"type": "session.started"})
             await harness.session.on_wake()
+            await _say(harness.session)
             await harness.session.handle_server_event({
                 "type": "session.output_audio.delta",
                 "delta": base64.b64encode(b"\x01\x00").decode("ascii"),

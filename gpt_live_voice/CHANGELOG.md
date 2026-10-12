@@ -2,6 +2,21 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.8.0
+
+- Renamed to **GPT-Live Voice**. The add-on slug is now `gpt_live_voice`.
+  Home Assistant treats that as a new add-on: uninstall **OpenAI Realtime 2
+  Voice Agent**, check for updates, then install **GPT-Live Voice**.
+- GPT-Live is the default voice path. The Realtime model setting does not
+  choose the voice model; gpt-live-1 does.
+- The microphone is forwarded only after the user has spoken and paused, so
+  an open follow-up window no longer makes the assistant answer silence and
+  loop.
+- Weather and other questions go through web search. The assistant stays
+  quiet while that lookup runs, then speaks the result.
+- The Live session opens when the device connects, so the wake word does not
+  wait on the handshake.
+
 ## 0.7.1
 
 - GPT-Live reconnects when OpenAI drops the WebSocket without a close

@@ -9,12 +9,13 @@ model speaks that text via ``session.commentary.append``.
 import json
 
 PLANNER_INSTRUCTIONS = (
-    "You help a voice assistant control Home Assistant. The user transcript "
-    "can be incomplete or wrong. If one Assist tool call is clearly required, "
-    "call that tool with complete arguments. If the device, room, or action "
-    "is ambiguous, do not call a tool; ask one short clarifying question. "
-    "Never say that an action succeeded. The application reports success "
-    "only from the tool result."
+    "You help a voice assistant. The user transcript can be incomplete or "
+    "wrong. For lights, switches, climate, media, and other home devices, "
+    "call one Assist tool with complete arguments. For weather, news, facts, "
+    "or anything outside the home, call web_search with the user's question. "
+    "If the device, room, or action is ambiguous, do not call a tool; ask one "
+    "short clarifying question. Never say that an action succeeded. The "
+    "application reports success only from the tool result."
 )
 
 _COMMENTARY_LIMIT = 1500

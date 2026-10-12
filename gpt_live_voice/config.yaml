@@ -1,7 +1,7 @@
-name: OpenAI Realtime 2 Voice Agent
-version: "0.7.1"
-slug: openai_realtime_voice_agent
-description: Talk to your home with OpenAI gpt-realtime-2 — a voice agent for the Home Assistant Voice PE, with live device control and web search.
+name: GPT-Live Voice
+version: "0.8.0"
+slug: gpt_live_voice
+description: Talk to your home with OpenAI gpt-live-1 — a voice agent for the Home Assistant Voice PE, with live device control and web search.
 url: https://github.com/SandorDrift23/ha-openai-realtime
 arch:
   - aarch64
@@ -59,10 +59,9 @@ options:
   transcription_language: ""
 
   # --- 🗣️ Model & voice ---
-  # voice_provider selects the session API. openai_realtime keeps gpt-realtime-2
-  # (and the model dropdown below). gpt_live always uses gpt-live-1 on
-  # v1/live/sessions and ignores openai_model.
-  voice_provider: "openai_realtime"
+  # gpt_live is the voice path (gpt-live-1). openai_realtime is the previous
+  # engine and is the only mode that reads openai_model.
+  voice_provider: "gpt_live"
   # (*_custom fields have NO defaults: optional → hidden until revealed via
   # "Show unused optional configuration options" or set in YAML.)
   openai_model: "gpt-realtime-2"

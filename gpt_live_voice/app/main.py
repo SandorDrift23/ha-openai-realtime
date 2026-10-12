@@ -13,7 +13,11 @@ from pipecat.transports.websocket.server import WebsocketServerTransport
 from app.mcp_service import HomeAssistantMCPService
 from app.phase_emitter import TURN_LIVENESS
 from app.disconnect_tool import get_disconnect_tool_definition, create_disconnect_tool_handler
-from app.web_search_tool import get_web_search_tool_definition, create_web_search_tool_handler
+from app.web_search_tool import (
+    get_web_search_tool_definition,
+    create_web_search_tool_handler,
+    run_web_search,
+)
 from app.audio_recording_service import AudioRecordingService
 from app.session_manager import SessionManager
 from app.websocket_handler import WebSocketHandler
@@ -382,12 +386,14 @@ class Application:
             phase_idle_debounce_ms = 1500
         phase_idle_debounce_ms = max(0, min(10000, phase_idle_debounce_ms))
 
-        voice_provider = os.environ.get("VOICE_PROVIDER", "openai_realtime").strip().lower()
+        voice_provider = os.environ.get("VOICE_PROVIDER", "gpt_live").strip().lower()
+        if voice_provider in ("", "null", "none"):
+            voice_provider = "gpt_live"
         if voice_provider not in ("openai_realtime", "gpt_live"):
             logger.warning(
-                f"⚠️ Unknown VOICE_PROVIDER {voice_provider!r}, falling back to openai_realtime"
+                f"⚠️ Unknown VOICE_PROVIDER {voice_provider!r}, falling back to gpt_live"
             )
-            voice_provider = "openai_realtime"
+            voice_provider = "gpt_live"
         # The echo probe opens the mic during playback for a recording only.
         # It is ignored on the realtime path so that path cannot be asked to
         # listen to its own speaker.
@@ -759,7 +765,15 @@ class Application:
             except Exception as e:
                 logger.warning(f"⚠️ GPT-Live could not load Assist tools: {e}")
 
+        if self.enable_web_search:
+            tools.append(get_web_search_tool_definition())
+
         async def call_tool(name, arguments):
+            if name == "web_search":
+                query = ""
+                if isinstance(arguments, dict):
+                    query = str(arguments.get("query") or "")
+                return await run_web_search(self.openai_api_key, self.web_search_model, query)
             if self.mcp_service is None:
                 raise RuntimeError("Home Assistant MCP is not available")
             return await self.mcp_service.call_tool(name, arguments)
@@ -808,9 +822,11 @@ class Application:
             await session.on_wake()
 
         async def on_start() -> None:
-            # va_client sends start on every socket connect. Drop a Live
-            # session left over from the previous connection.
+            # va_client sends start on every socket connect. Replace any Live
+            # session left from the previous connection, then open the next one
+            # now so the wake word does not wait on the handshake.
             await connection.close()
+            await connection.ensure_open()
 
         async def on_flush() -> None:
             await session.on_flush()
@@ -820,6 +836,7 @@ class Application:
 
         async def on_conversation_end() -> None:
             await connection.close()
+            asyncio.create_task(connection.ensure_open())
 
         serializer = self.websocket_handler._serializer
         if serializer is not None:

@@ -34,19 +34,18 @@ configuration:
   voice_provider:
     name: "🗣️ Model & stem · Stemprovider"
     description: >-
-      openai_realtime (standaard) houdt het huidige gpt-realtime-2-gesprek.
-      gpt_live gebruikt OpenAI gpt-live-1 in een aparte sessie en negeert het
-      Realtime-model hieronder. Huisbediening in gpt_live loopt via Assist MCP,
-      en pas nadat Home Assistant een resultaat teruggeeft. Laat dit op
-      openai_realtime staan tenzij je GPT-Live test.
+      gpt_live (standaard) is het spraakpad: OpenAI gpt-live-1. Het
+      Realtime-model hieronder geldt daar niet voor. openai_realtime is de
+      vorige engine. Huisbediening gebeurt pas nadat Home Assistant een
+      resultaat teruggeeft. Vragen zoals het weer lopen via webzoeken.
   openai_model:
-    name: "🗣️ Model & stem · Model"
+    name: "⚙️ Geavanceerd · Oud Realtime-model"
     description: >-
-      Het OpenAI-model dat luistert en praat. gpt-realtime-2 (standaard) is
-      het nieuwste en slimste. gpt-realtime-mini is merkbaar goedkoper maar
-      minder slim. Wil je een model dat er niet tussen staat? Kies "custom"
-      en zet onderaan deze pagina "Toon ongebruikte optionele
-      configuratie-opties" aan om het custom-veld zichtbaar te maken.
+      Alleen gebruikt als Stemprovider openai_realtime is. gpt-live-1 negeert
+      dit. gpt-realtime-2 is het nieuwste van die oudere engine.
+      gpt-realtime-mini is goedkoper en minder slim. Voor een model dat er
+      niet tussen staat: kies "custom" en zet onderaan "Toon ongebruikte
+      optionele configuratie-opties" aan.
   openai_model_custom:
     name: "🗣️ Model & stem · Model (custom)"
     description: >-
