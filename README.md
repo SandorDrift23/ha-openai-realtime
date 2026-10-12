@@ -31,9 +31,10 @@ default, is how we decide whether the microphone can stay open. Do not turn
 test through a powered speaker on the Voice PE 3.5 mm jack, away from the
 microphones.
 
-> Fork of **[fjfricke/ha-openai-realtime](https://github.com/fjfricke/ha-openai-realtime)**,
-> with `gpt-realtime-2` kept as the default and `gpt-live-1` added as a separate
-> provider. Home control uses the official HA MCP Server. The Voice PE firmware
+> Fork of **[xandervanerven/ha-openai-realtime](https://github.com/xandervanerven/ha-openai-realtime)**,
+> which is a fork of **[fjfricke/ha-openai-realtime](https://github.com/fjfricke/ha-openai-realtime)** (Felix Fricke).
+> `gpt-realtime-2` stays the default, and `gpt-live-1` is a separate provider.
+> Home control uses the official HA MCP Server. The Voice PE firmware
 > is the branch linked above.
 
 ## Repository layout
@@ -89,7 +90,7 @@ only after the MCP server returns the result.
 
 ## Credits
 
-- Forked from **[fjfricke/ha-openai-realtime](https://github.com/fjfricke/ha-openai-realtime)**.
+- Fork of **[xandervanerven/ha-openai-realtime](https://github.com/xandervanerven/ha-openai-realtime)**, itself a fork of **[fjfricke/ha-openai-realtime](https://github.com/fjfricke/ha-openai-realtime)** (Felix Fricke).
 - Built on **[Pipecat](https://github.com/pipecat-ai/pipecat)**.
 - Firmware thin-client design based on **[maxmaxme/home-assistant-voice-pe](https://github.com/maxmaxme/home-assistant-voice-pe)** (a fork of **[esphome/home-assistant-voice-pe](https://github.com/esphome/home-assistant-voice-pe)**, Nabu Casa / ESPHome).
 - Inspiration from **[marcinnowak79/home-assistant-voice-pe](https://github.com/marcinnowak79/home-assistant-voice-pe)** (gemini-live-proxy).
