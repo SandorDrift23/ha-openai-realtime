@@ -42,6 +42,24 @@ LIVE_INSTRUCTION_SUFFIX = (
 SendFn = Callable[[dict], Awaitable[None]]
 PhaseFn = Callable[[str], Awaitable[None]]
 AudioFn = Callable[[bytes], Awaitable[None]]
+SocketLostFn = Callable[[], None]
+
+
+def _is_socket_lost(exc: BaseException) -> bool:
+    """True when a send hit a WebSocket that is already gone.
+
+    websockets raises ConnectionClosedError('no close frame received or sent')
+    for an abnormal close (code 1006). The pipeline must not see that once per
+    microphone frame.
+    """
+    if type(exc).__name__ in {"ConnectionClosed", "ConnectionClosedError", "ConnectionClosedOK"}:
+        return True
+    text = str(exc).lower()
+    return (
+        "no close frame" in text
+        or "connection is closed" in text
+        or "socket is closed" in text
+    )
 
 
 class TranscriptLog:
@@ -84,6 +102,7 @@ class GptLiveSession:
         self._idle_debounce_s = max(0.0, idle_debounce_s)
         self._on_transcript = on_transcript
         self._send: Optional[SendFn] = None
+        self._on_socket_lost: Optional[SocketLostFn] = None
         self._n = 0
         self._odd = b""
         self._ready = asyncio.Event()
@@ -102,6 +121,10 @@ class GptLiveSession:
     def bind_send(self, send: SendFn) -> None:
         self._send = send
 
+    def bind_socket_lost(self, callback: SocketLostFn) -> None:
+        """Called once when an audio send discovers the Live socket is dead."""
+        self._on_socket_lost = callback
+
     @property
     def ready(self) -> bool:
         return self._ready.is_set()
@@ -110,6 +133,16 @@ class GptLiveSession:
     def phase(self) -> str:
         return self._phase
 
+    def mark_socket_lost(self) -> None:
+        """Drop session readiness after an abnormal socket close.
+
+        session.closed never arrives on a 1006 drop, so ready would otherwise
+        stay set and the next wake would keep the dead socket.
+        """
+        self._ready.clear()
+        self._started = False
+        self._closed.set()
+
     def _eid(self) -> str:
         self._n += 1
         return f"evt-{self._n}"
@@ -117,7 +150,25 @@ class GptLiveSession:
     async def _emit(self, event: dict) -> None:
         if self._send is None:
             raise RuntimeError("GPT-Live session has no socket")
-        await self._send(event)
+        try:
+            await self._send(event)
+        except Exception as exc:
+            if not _is_socket_lost(exc):
+                raise
+            kind = str(event.get("type") or "")
+            logger.warning("GPT-Live send failed because the socket is closed: %s", exc)
+            self.mark_socket_lost()
+            if kind.startswith("session.input_audio."):
+                if self._on_socket_lost is not None:
+                    self._on_socket_lost()
+                return
+            raise
+
+    async def resume_after_reconnect(self) -> None:
+        """Unmute after a reconnect if this turn was still accepting speech."""
+        if not self.ready or self._input_muted or self._reply_mute or self._hold == "interrupt":
+            return
+        await self._control_input(muted=False)
 
     async def start(self) -> None:
         """Send session.start. Caller waits for session.started before audio."""
@@ -355,7 +406,13 @@ class GptLiveSession:
 
 
 class GptLiveConnection:
-    """Primary Live WebSocket. Reopens after conversation_end on the next wake."""
+    """Primary Live WebSocket.
+
+    A normal conversation_end closes the session and the next wake opens a
+    new one. An abnormal drop (no close frame) also clears readiness so the
+    next wake, or an in-flight turn, opens a new session instead of sending
+    on the dead socket.
+    """
 
     def __init__(self, session: GptLiveSession, api_key: str, url: str = LIVE_URL):
         self.session = session
@@ -364,18 +421,31 @@ class GptLiveConnection:
         self._ws = None
         self._reader: Optional[asyncio.Task] = None
         self._opening: Optional[asyncio.Lock] = None
+        self._reopen_task: Optional[asyncio.Task] = None
+        self._accepting = True
+        self.session.bind_socket_lost(self._schedule_reopen)
+
+    def _transport_open(self) -> bool:
+        ws = self._ws
+        if ws is None:
+            return False
+        state = getattr(ws, "state", None)
+        if state is None:
+            return getattr(ws, "close_code", None) is None
+        return getattr(state, "name", "") == "OPEN"
 
     async def ensure_open(self) -> None:
         if self._opening is None:
             self._opening = asyncio.Lock()
         async with self._opening:
-            if self.session.ready and self._ws is not None:
+            if self.session.ready and self._transport_open():
                 return
             await self._open()
 
     async def _open(self) -> None:
         import websockets
 
+        self._accepting = True
         await self._shutdown_socket()
         self._ws = await websockets.connect(
             self._url,
@@ -384,7 +454,10 @@ class GptLiveConnection:
         )
 
         async def send(event: dict) -> None:
-            await self._ws.send(json.dumps(event))
+            ws = self._ws
+            if ws is None:
+                raise ConnectionError("GPT-Live socket is closed")
+            await ws.send(json.dumps(event))
 
         self.session.bind_send(send)
         await self.session.start()
@@ -392,22 +465,58 @@ class GptLiveConnection:
         await asyncio.wait_for(self.session._ready.wait(), CLOSE_TIMEOUT_S)
 
     async def _read(self) -> None:
+        ws = self._ws
+        cancelled = False
         try:
-            async for raw in self._ws:
+            async for raw in ws:
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8")
                 await self.session.handle_server_event(json.loads(raw))
         except asyncio.CancelledError:
+            # Shutdown cancels this task. Cleanup below must stay synchronous:
+            # awaiting here can be interrupted by the same cancellation.
+            cancelled = True
             raise
         except Exception as exc:
             logger.warning("GPT-Live socket ended: %s", exc)
         finally:
-            if not self.session._finished:
-                await self.session._set_phase("idle")
+            self._note_reader_ended(ws, reopen=not cancelled)
+
+    def _note_reader_ended(self, ws, *, reopen: bool) -> None:
+        """Forget a socket that died without session.closed.
+
+        Only the socket this reader owned is cleared, so a reconnect that
+        already replaced it is left alone. A cancelled reader is shut down
+        on purpose (close, or the start of a new connect) and must not reopen.
+        """
+        if self._ws is not ws or self.session._finished:
+            return
+        self.session.mark_socket_lost()
+        self._ws = None
+        if reopen:
+            self._schedule_reopen()
+
+    def _schedule_reopen(self) -> None:
+        if not self._accepting:
+            return
+        if self._reopen_task is not None and not self._reopen_task.done():
+            return
+        self._reopen_task = asyncio.create_task(self._reopen())
+
+    async def _reopen(self) -> None:
+        try:
+            await self.session._set_phase("idle")
+            await self.ensure_open()
+            await self.session.resume_after_reconnect()
+        except Exception as exc:
+            logger.warning("GPT-Live reopen failed: %s", exc)
 
     async def close(self) -> None:
-        await self.session.close()
-        await self._shutdown_socket()
+        self._accepting = False
+        try:
+            await self.session.close()
+        finally:
+            await self._shutdown_socket()
 
     async def _shutdown_socket(self) -> None:
         if self._reader is not None:

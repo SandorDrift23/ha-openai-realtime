@@ -2,6 +2,13 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.7.1
+
+- GPT-Live reconnects when OpenAI drops the WebSocket without a close
+  handshake. A dead session is no longer treated as still open, and
+  microphone frames stop raising `no close frame received or sent` once
+  per frame.
+
 ## 0.7.0
 
 - Add a `gpt_live` voice provider for OpenAI `gpt-live-1` on

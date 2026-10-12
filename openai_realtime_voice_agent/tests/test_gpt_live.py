@@ -13,7 +13,7 @@ from pathlib import Path
 
 from app.device_protocol import hello_message
 from app.echo_probe import BARGE_IN_TEST_JUSTIFIED, EchoProbe
-from app.gpt_live import LIVE_MODEL, LIVE_SAMPLE_RATE, GptLiveSession
+from app.gpt_live import LIVE_MODEL, LIVE_SAMPLE_RATE, GptLiveConnection, GptLiveSession
 from app.live_delegation import AssistDelegator, function_tools_from_schema
 
 
@@ -92,6 +92,18 @@ async def _quiet_delegator():
     return AssistDelegator(complete, call_tool, [])
 
 
+class _ConnectionClosedError(Exception):
+    """Stand-in for websockets' abnormal-close error, matched by type name."""
+
+
+_ConnectionClosedError.__name__ = "ConnectionClosedError"
+
+
+class _Socket:
+    def __init__(self, state_name):
+        self.state = type("State", (), {"name": state_name})()
+
+
 class GptLiveTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.harness = SessionHarness(await _quiet_delegator())
@@ -150,6 +162,78 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         await self.session.handle_server_event({"type": "session.closed"})
         await closing
         self.assertFalse(self.session.ready)
+
+    async def test_dead_socket_does_not_raise_on_every_mic_frame(self):
+        lost = {"n": 0}
+
+        async def send(event):
+            if str(event["type"]).startswith("session.input_audio."):
+                raise _ConnectionClosedError("no close frame received or sent")
+            self.harness.sent.append(event)
+
+        self.session.bind_send(send)
+        self.session.bind_socket_lost(lambda: lost.__setitem__("n", lost["n"] + 1))
+        await self.session.start()
+        await self.session.handle_server_event({"type": "session.started"})
+        await self.session.on_wake()
+        await self.session.on_uplink(_pcm())
+        await self.session.on_uplink(_pcm())
+        self.assertFalse(self.session.ready)
+        self.assertEqual(lost["n"], 1)
+        self.assertFalse(any(event["type"] == "session.input_audio.append" for event in self.harness.sent))
+
+    async def test_session_start_still_fails_when_the_socket_is_closed(self):
+        async def send(event):
+            raise _ConnectionClosedError("no close frame received or sent")
+
+        self.session.bind_send(send)
+        with self.assertRaises(_ConnectionClosedError):
+            await self.session.start()
+        self.assertFalse(self.session.ready)
+
+    async def test_ensure_open_replaces_a_closed_socket(self):
+        self.session._ready.set()
+        self.session._started = True
+        connection = GptLiveConnection(self.session, "test-key")
+        connection._ws = _Socket("CLOSED")
+        opened = {"n": 0}
+
+        async def open_socket():
+            opened["n"] += 1
+            self.session._ready.set()
+            connection._ws = _Socket("OPEN")
+
+        connection._open = open_socket
+        await connection.ensure_open()
+        await connection.ensure_open()
+        self.assertEqual(opened["n"], 1)
+
+    async def test_reader_drop_forgets_only_its_own_socket(self):
+        connection = GptLiveConnection(self.session, "test-key")
+        dead = _Socket("CLOSED")
+        replacement = _Socket("OPEN")
+        connection._ws = replacement
+        self.session._ready.set()
+        self.session._started = True
+
+        connection._note_reader_ended(dead, reopen=True)
+        self.assertTrue(self.session.ready)
+        self.assertIs(connection._ws, replacement)
+        self.assertIsNone(connection._reopen_task)
+
+        connection._ws = dead
+        scheduled = {"n": 0}
+        connection._schedule_reopen = lambda: scheduled.__setitem__("n", scheduled["n"] + 1)
+        connection._note_reader_ended(dead, reopen=True)
+        self.assertFalse(self.session.ready)
+        self.assertIsNone(connection._ws)
+        self.assertEqual(scheduled["n"], 1)
+
+        connection._ws = dead
+        self.session._ready.set()
+        self.session._started = True
+        connection._note_reader_ended(dead, reopen=False)
+        self.assertEqual(scheduled["n"], 1)
 
     async def test_interrupt_drops_later_audio_until_wake(self):
         await self.session.start()
