@@ -7,6 +7,7 @@ INSTRUCTIONS=$(bashio::config 'instructions')
 TRANSCRIPTION_LANGUAGE=$(bashio::config 'transcription_language')
 
 # --- 🗣️ Model & voice ---
+VOICE_PROVIDER=$(bashio::config 'voice_provider')
 OPENAI_MODEL=$(bashio::config 'openai_model')
 OPENAI_VOICE=$(bashio::config 'openai_voice')
 OPENAI_SPEED=$(bashio::config 'openai_speed')
@@ -31,6 +32,7 @@ NOISE_REDUCTION=$(bashio::config 'noise_reduction')
 HA_MCP_URL=$(bashio::config 'ha_mcp_url')
 LONGLIVED_TOKEN=$(bashio::config 'longlived_token')
 MCP_TOOL_ALLOWLIST=$(bashio::config 'mcp_tool_allowlist')
+LIVE_PLANNER_MODEL=$(bashio::config 'live_planner_model')
 
 # --- ⚙️ Advanced ---
 WEBSOCKET_PORT=$(bashio::config 'websocket_port')
@@ -40,6 +42,7 @@ TRANSCRIPTION_MODEL=$(bashio::config 'transcription_model')
 
 # --- 🔍 Debug ---
 ENABLE_RECORDING=$(bashio::config 'enable_recording')
+ENABLE_ECHO_PROBE=$(bashio::config 'enable_echo_probe')
 
 # Validate required configuration
 if [ -z "$OPENAI_API_KEY" ]; then
@@ -51,6 +54,7 @@ fi
 export OPENAI_API_KEY
 export INSTRUCTIONS
 export TRANSCRIPTION_LANGUAGE
+export VOICE_PROVIDER
 export OPENAI_MODEL
 export OPENAI_VOICE
 export OPENAI_SPEED
@@ -66,11 +70,13 @@ export PLAYBACK_PREBUFFER_MS
 export NOISE_REDUCTION
 export LONGLIVED_TOKEN
 export MCP_TOOL_ALLOWLIST
+export LIVE_PLANNER_MODEL
 export WEBSOCKET_PORT
 export SESSION_REUSE_TIMEOUT_SECONDS
 export MAX_CONTEXT_MESSAGES
 export TRANSCRIPTION_MODEL
 export ENABLE_RECORDING
+export ENABLE_ECHO_PROBE
 
 # The *_custom escape hatches (🗣️/🌐/⚙️) are optional WITHOUT defaults —
 # bashio::config prints "null" for unset optionals, and main.py's
@@ -87,6 +93,10 @@ fi
 if bashio::config.has_value 'web_search_model_custom'; then
     WEB_SEARCH_MODEL_CUSTOM=$(bashio::config 'web_search_model_custom')
     export WEB_SEARCH_MODEL_CUSTOM
+fi
+if bashio::config.has_value 'live_planner_model_custom'; then
+    LIVE_PLANNER_MODEL_CUSTOM=$(bashio::config 'live_planner_model_custom')
+    export LIVE_PLANNER_MODEL_CUSTOM
 fi
 if bashio::config.has_value 'transcription_model_custom'; then
     TRANSCRIPTION_MODEL_CUSTOM=$(bashio::config 'transcription_model_custom')

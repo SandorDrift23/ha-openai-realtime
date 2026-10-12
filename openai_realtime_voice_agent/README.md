@@ -13,8 +13,11 @@ firmware** (a thin client that talks a small WebSocket protocol); it is not a
 drop-in for the stock HA voice pipeline.
 
 > **You need both halves.** This add-on does nothing without the **Voice PE firmware**
-> that streams audio to it →
-> **[xandervanerven/home-assistant-voice-pe](https://github.com/xandervanerven/home-assistant-voice-pe)**.
+> that streams audio to it. The GPT-Live path expects the HaipeiWang Voice PE
+> firmware branch `feature/gpt-live-voice-pe`, with `barge_in` left false.
+> The default provider is still `openai_realtime` (`gpt-realtime-2`). Set
+> **Voice provider** to `gpt_live` to use `gpt-live-1`. Play that test through
+> a powered speaker on the Voice PE 3.5 mm jack, away from the microphones.
 
 ## What it does
 

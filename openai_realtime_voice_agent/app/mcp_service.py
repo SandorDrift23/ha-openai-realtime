@@ -43,6 +43,28 @@ class HomeAssistantMCPService:
         except Exception as e:
             logger.error(f"❌ Failed to initialize Home Assistant MCP Client: {e}", exc_info=True)
             raise
+
+    async def call_tool(self, name: str, arguments: dict) -> str:
+        """Run one Assist MCP tool and return its text after the server answers.
+
+        Uses the same Pipecat MCP wrapper as the realtime path. The Live
+        planner calls this only after it has chosen the tool, and it does not
+        speak the result until this returns.
+        """
+        if self.mcp_client is None:
+            raise RuntimeError("Home Assistant MCP client is not initialized")
+        holder: dict = {}
+
+        class _Params:
+            function_name = name
+            arguments = arguments or {}
+            tool_call_id = "gpt-live"
+
+            async def result_callback(self, result):
+                holder["result"] = result
+
+        await self.mcp_client._tool_wrapper(_Params())
+        return str(holder.get("result", ""))
     
     def get_client(self) -> Optional[MCPClient]:
         """Get the MCP client instance."""

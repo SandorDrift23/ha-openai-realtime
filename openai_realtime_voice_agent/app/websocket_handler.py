@@ -17,6 +17,7 @@ from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame
 from pipecat.audio.utils import create_stream_resampler
 from pipecat.services.openai.realtime import events as openai_rt_events
 
+from app.device_protocol import hello_message
 from app.raw_audio_serializer import RawAudioSerializer
 from app.session_manager import SessionManager
 from app.audio_recording_service import AudioRecordingService
@@ -338,6 +339,8 @@ class WebSocketHandler:
         follow_up_open_delay_ms: int = 700,
         wake_open_delay_ms: int = 700,
         playback_prebuffer_ms: int = 0,
+        echo_probe: bool = False,
+        echo_probe_max_volume_millis: int = 300,
     ):
         """
         Initialize WebSocket handler.
@@ -365,6 +368,8 @@ class WebSocketHandler:
         self.follow_up_open_delay_ms = max(0, int(follow_up_open_delay_ms))
         self.wake_open_delay_ms = max(0, int(wake_open_delay_ms))
         self.playback_prebuffer_ms = max(0, int(playback_prebuffer_ms))
+        self.echo_probe = bool(echo_probe)
+        self.echo_probe_max_volume_millis = max(0, min(400, int(echo_probe_max_volume_millis)))
 
         self.transport: Optional[WebsocketServerTransport] = None
         self.pipeline: Optional[Pipeline] = None
@@ -707,6 +712,31 @@ class WebSocketHandler:
             self._serializer.set_wake_handler(_on_device_wake)
 
         return pipeline, runner, task
+
+    def build_live_pipeline(
+        self,
+        transport: WebsocketServerTransport,
+        live_processor,
+        client_id: str,
+    ) -> tuple[Pipeline, PipelineRunner, PipelineTask]:
+        """Device audio path for gpt-live-1.
+
+        The realtime service, its connection recovery, and PhaseEmitter stay
+        off this path. The Live session emits device phases itself. Input is
+        still resampled from 16 kHz to 24 kHz before it reaches the session.
+        """
+        logger.info(f"🔗 Building GPT-Live pipeline for client: {client_id}")
+        pipeline = Pipeline([
+            transport.input(),
+            InputResampler(out_rate=PIPELINE_SAMPLE_RATE),
+            live_processor,
+            transport.output(),
+        ])
+        runner = PipelineRunner()
+        task = PipelineTask(pipeline, idle_timeout_secs=None, cancel_on_idle_timeout=False)
+        asyncio.create_task(runner.run(task))
+        logger.info("✅ GPT-Live pipeline started")
+        return pipeline, runner, task
     
     def extract_client_id(self, websocket) -> str:
         """
@@ -789,14 +819,14 @@ class WebSocketHandler:
             # every connect so an add-on config change takes effect on reconnect.
             await self._send_json(
                 websocket,
-                {
-                    "type": "hello",
-                    "audio_out": "pcm",
-                    "follow_up_ms": self.follow_up_ms,
-                    "follow_up_open_delay_ms": self.follow_up_open_delay_ms,
-                    "wake_open_delay_ms": self.wake_open_delay_ms,
-                    "playback_prebuffer_ms": self.playback_prebuffer_ms,
-                },
+                hello_message(
+                    follow_up_ms=self.follow_up_ms,
+                    follow_up_open_delay_ms=self.follow_up_open_delay_ms,
+                    wake_open_delay_ms=self.wake_open_delay_ms,
+                    playback_prebuffer_ms=self.playback_prebuffer_ms,
+                    echo_probe=self.echo_probe,
+                    echo_probe_max_volume_millis=self.echo_probe_max_volume_millis,
+                ),
             )
             await on_client_connected_callback(client_id)
 

@@ -31,6 +31,14 @@ configuration:
       verstond). Leeg = automatisch detecteren (geen transcript in het log).
 
   # --- 🗣️ Model & stem ---
+  voice_provider:
+    name: "🗣️ Model & stem · Stemprovider"
+    description: >-
+      openai_realtime (standaard) houdt het huidige gpt-realtime-2-gesprek.
+      gpt_live gebruikt OpenAI gpt-live-1 in een aparte sessie en negeert het
+      Realtime-model hieronder. Huisbediening in gpt_live loopt via Assist MCP,
+      en pas nadat Home Assistant een resultaat teruggeeft. Laat dit op
+      openai_realtime staan tenzij je GPT-Live test.
   openai_model:
     name: "🗣️ Model & stem · Model"
     description: >-
@@ -168,6 +176,18 @@ configuration:
       gebruiken; leeg = allemaal. Met de ingebouwde MCP-server kun je dit
       leeg laten. Vooral nuttig met de ha-mcp-add-on (80+ tools) om gesprekken
       snel en goedkoop te houden.
+  live_planner_model:
+    name: "🏠 Home Assistant · GPT-Live plannermodel"
+    description: >-
+      Alleen gebruikt als Stemprovider op gpt_live staat. Dit tekstmodel leest
+      het transcript en kiest een Assist-tool. Het is niet het stemmodel.
+      gpt-5.5 is de standaard. Een huisactie wordt pas uitgesproken nadat
+      Home Assistant het toolresultaat heeft teruggegeven.
+  live_planner_model_custom:
+    name: "🏠 Home Assistant · GPT-Live plannermodel (custom)"
+    description: >-
+      Alleen gebruikt als het plannermodel op "custom" staat. Elk
+      Responses-model dat functies kan aanroepen. (Standaard verborgen.)
 
   # --- ⚙️ Geavanceerd ---
   websocket_port:
@@ -232,3 +252,11 @@ configuration:
     description: >-
       Slaat microfoon- en speakeraudio op in bestanden binnen de add-on,
       alleen voor probleemanalyse. Normaal uit laten.
+  enable_echo_probe:
+    name: "🔍 Debug · Echo-meting"
+    description: >-
+      Alleen bij GPT-Live, en standaard uit. Tijdens een antwoord blijft de
+      microfoon open zodat de add-on die opname met tijdstempels bewaart.
+      Het afspeelvolume wordt begrensd. Dit laat je de assistent niet
+      onderbreken. Laat het uit tot je echo meet, en houd de externe speaker
+      zacht.

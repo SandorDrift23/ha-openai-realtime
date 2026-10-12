@@ -225,6 +225,9 @@ class Application:
         self.session_manager: Optional[SessionManager] = None
         self.current_task: Optional[PipelineTask] = None
         self._pipeline_lock: Optional[asyncio.Lock] = None
+        self.voice_provider = "openai_realtime"
+        self.live_connection = None
+        self.echo_probe_recorder = None
         
     async def initialize(self) -> None:
         """Initialize all components."""
@@ -373,6 +376,28 @@ class Application:
         except (TypeError, ValueError):
             playback_prebuffer_ms = 150
         playback_prebuffer_ms = max(0, min(2000, playback_prebuffer_ms))
+        try:
+            phase_idle_debounce_ms = int(os.environ.get("PHASE_IDLE_DEBOUNCE_MS", "1500"))
+        except (TypeError, ValueError):
+            phase_idle_debounce_ms = 1500
+        phase_idle_debounce_ms = max(0, min(10000, phase_idle_debounce_ms))
+
+        voice_provider = os.environ.get("VOICE_PROVIDER", "openai_realtime").strip().lower()
+        if voice_provider not in ("openai_realtime", "gpt_live"):
+            logger.warning(
+                f"⚠️ Unknown VOICE_PROVIDER {voice_provider!r}, falling back to openai_realtime"
+            )
+            voice_provider = "openai_realtime"
+        # The echo probe opens the mic during playback for a recording only.
+        # It is ignored on the realtime path so that path cannot be asked to
+        # listen to its own speaker.
+        echo_probe = (
+            voice_provider == "gpt_live"
+            and os.environ.get("ENABLE_ECHO_PROBE", "false").strip().lower() == "true"
+        )
+        live_planner_model = _resolve_choice(
+            "LIVE_PLANNER_MODEL", "LIVE_PLANNER_MODEL_CUSTOM", "gpt-5.5"
+        )
 
         # Get session reuse timeout and initialize session manager
         session_reuse_timeout = float(os.environ.get("SESSION_REUSE_TIMEOUT_SECONDS", "300"))
@@ -422,6 +447,7 @@ class Application:
             follow_up_open_delay_ms=follow_up_open_delay_ms,
             wake_open_delay_ms=wake_open_delay_ms,
             playback_prebuffer_ms=playback_prebuffer_ms,
+            echo_probe=echo_probe,
         )
         logger.info(
             f"🔁 Follow-up window: {follow_up_listen_seconds}s "
@@ -454,6 +480,19 @@ class Application:
         self.mcp_client = mcp_client
         self.enable_web_search = enable_web_search
         self.web_search_model = web_search_model
+        self.voice_provider = voice_provider
+        self.echo_probe = echo_probe
+        self.live_planner_model = live_planner_model
+        self.phase_idle_debounce_s = phase_idle_debounce_ms / 1000.0
+        self.live_connection = None
+
+        if voice_provider == "gpt_live":
+            logger.info(
+                "🎙️ Voice provider: gpt_live (model gpt-live-1). "
+                "The gpt-realtime-2 path is not started."
+            )
+        else:
+            logger.info(f"🎙️ Voice provider: openai_realtime (model {openai_model})")
 
         # Initialize audio recording service (optional)
         self.audio_recording_service = AudioRecordingService(
@@ -699,10 +738,130 @@ class Application:
             
             logger.info("✅ New OpenAI Session created")
             return self.openai_service
-    
+
+    async def _run_gpt_live(self) -> None:
+        """Serve the Voice PE with gpt-live-1. Does not create a Realtime service."""
+        from app.echo_probe import EchoProbe
+        from app.gpt_live import GptLiveConnection, GptLiveSession
+        from app.gpt_live_processor import GptLiveProcessor
+        from app.live_delegation import (
+            AssistDelegator,
+            function_tools_from_schema,
+            openai_planner_complete,
+        )
+
+        tools = []
+        if self.mcp_client is not None:
+            try:
+                schema = await self.mcp_client.get_tools_schema()
+                tools = function_tools_from_schema(schema, self.mcp_tool_allowlist)
+                logger.info(f"GPT-Live Assist tool count: {len(tools)}")
+            except Exception as e:
+                logger.warning(f"⚠️ GPT-Live could not load Assist tools: {e}")
+
+        async def call_tool(name, arguments):
+            if self.mcp_service is None:
+                raise RuntimeError("Home Assistant MCP is not available")
+            return await self.mcp_service.call_tool(name, arguments)
+
+        async def complete(transcript, tool_defs):
+            return await openai_planner_complete(
+                self.openai_api_key, self.live_planner_model, transcript, tool_defs
+            )
+
+        probe = EchoProbe() if self.echo_probe else None
+        self.echo_probe_recorder = probe
+        playback = {"play": None}
+
+        async def on_output_audio(pcm: bytes) -> None:
+            play = playback["play"]
+            if play is not None:
+                await play(pcm)
+
+        async def on_phase(value: str) -> None:
+            await self.websocket_handler.broadcast_phase(value)
+
+        def on_transcript(role: str, delta: str) -> None:
+            logger.info(f"GPT-Live {role} transcript: {delta}")
+
+        session = GptLiveSession(
+            voice=self.voice,
+            instructions=self.instructions,
+            delegator=AssistDelegator(complete, call_tool, tools),
+            on_phase=on_phase,
+            on_output_audio=on_output_audio,
+            echo_probe=probe,
+            idle_debounce_s=self.phase_idle_debounce_s,
+            on_transcript=on_transcript,
+        )
+        connection = GptLiveConnection(session, self.openai_api_key)
+        self.live_connection = connection
+        processor = GptLiveProcessor(session)
+        playback["play"] = processor.play
+
+        self.pipeline, self.runner, self.current_task = self.websocket_handler.build_live_pipeline(
+            self.websocket_transport, processor, "server"
+        )
+
+        async def on_wake() -> None:
+            await connection.ensure_open()
+            await session.on_wake()
+
+        async def on_start() -> None:
+            # va_client sends start on every socket connect. Drop a Live
+            # session left over from the previous connection.
+            await connection.close()
+
+        async def on_flush() -> None:
+            await session.on_flush()
+
+        async def on_interrupt() -> None:
+            await session.on_interrupt()
+
+        async def on_conversation_end() -> None:
+            await connection.close()
+
+        serializer = self.websocket_handler._serializer
+        if serializer is not None:
+            serializer.set_wake_handler(on_wake)
+            serializer.set_session_start_handler(on_start)
+            serializer.set_mic_flush_handler(on_flush)
+            serializer.set_interrupt_handler(on_interrupt)
+            serializer.set_conversation_end_handler(on_conversation_end)
+
+        async def on_client_connected(client_id: str) -> None:
+            logger.info(f"GPT-Live device connected: {client_id}")
+
+        def on_client_disconnected(client_id: str) -> None:
+            logger.info(f"GPT-Live device disconnected: {client_id}")
+            asyncio.create_task(connection.close())
+
+        self.websocket_handler.setup_event_handlers(
+            transport=self.websocket_transport,
+            on_client_connected_callback=on_client_connected,
+            on_client_disconnected_callback=on_client_disconnected,
+            openai_service_getter=lambda _client_id: None,
+        )
+        logger.info(
+            "✅ GPT-Live websocket ready "
+            f"(planner={self.live_planner_model}, echo_probe={self.echo_probe})"
+        )
+        try:
+            await self.runner.run(self.current_task)
+        except KeyboardInterrupt:
+            logger.info("Received keyboard interrupt")
+        except Exception as e:
+            logger.error(f"Fatal error: {e}", exc_info=True)
+            raise
+        finally:
+            await self.cleanup()
+
     async def run(self) -> None:
         """Run the application."""
         await self.initialize()
+        if self.voice_provider == "gpt_live":
+            await self._run_gpt_live()
+            return
         
         # Create initial OpenAI service (will be replaced per connection)
         await self._ensure_openai_service()
@@ -803,6 +962,18 @@ class Application:
         """Cleanup resources."""
         logger.info("Cleaning up application...")
         
+        if self.echo_probe_recorder is not None:
+            try:
+                self.echo_probe_recorder.close()
+            except Exception as e:
+                logger.warning(f"⚠️ Error closing echo probe: {e}")
+
+        if self.live_connection is not None:
+            try:
+                await self.live_connection.close()
+            except Exception as e:
+                logger.warning(f"⚠️ Error closing GPT-Live session: {e}")
+
         if self.runner:
             try:
                 await self.runner.cancel()

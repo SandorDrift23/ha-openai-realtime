@@ -31,8 +31,16 @@ configuration:
       Leave empty for auto-detect (no user transcript in the log).
 
   # --- 🗣️ Model & voice ---
+  voice_provider:
+    name: "🗣️ Model & voice · Voice provider"
+    description: >-
+      openai_realtime (default) keeps the current gpt-realtime-2 conversation.
+      gpt_live uses OpenAI gpt-live-1 on a separate session and ignores the
+      Realtime model below. Home control in gpt_live goes through Assist MCP
+      after Home Assistant returns a result. Leave this on openai_realtime
+      unless you are testing GPT-Live.
   openai_model:
-    name: "🗣️ Model & voice · Model"
+    name: "🗣️ Model & voice · Realtime model"
     description: >-
       The OpenAI model that listens and talks. gpt-realtime-2 (default) is the
       newest and smartest. gpt-realtime-mini is noticeably cheaper but less
@@ -164,6 +172,18 @@ configuration:
       all of them. With the built-in MCP server you can leave this empty.
       Mainly useful with the ha-mcp add-on (80+ tools) to keep conversations
       fast and cheap.
+  live_planner_model:
+    name: "🏠 Home Assistant · GPT-Live planner model"
+    description: >-
+      Used only when Voice provider is gpt_live. This text model reads the
+      transcript and chooses an Assist tool. It is not the voice model.
+      gpt-5.5 is the default. The assistant speaks a home action only after
+      Home Assistant returns the tool result.
+  live_planner_model_custom:
+    name: "🏠 Home Assistant · GPT-Live planner model (custom)"
+    description: >-
+      Only used when the planner model is set to "custom". Any Responses
+      model that can call functions. (Hidden by default.)
 
   # --- ⚙️ Advanced ---
   websocket_port:
@@ -228,3 +248,10 @@ configuration:
     description: >-
       Saves microphone and speaker audio to files inside the add-on, for
       troubleshooting only. Leave off normally.
+  enable_echo_probe:
+    name: "🔍 Debug · Echo probe"
+    description: >-
+      GPT-Live only, and off by default. While a reply plays, the microphone
+      stays open so the add-on can record it with timestamps. Playback volume
+      is capped. This does not let you interrupt the assistant. Leave it off
+      until you are measuring echo, and keep the external speaker quiet.

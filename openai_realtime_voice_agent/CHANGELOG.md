@@ -2,6 +2,18 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.7.0
+
+- Add a `gpt_live` voice provider for OpenAI `gpt-live-1` on
+  `v1/live/sessions`. The default `openai_realtime` path and its model list,
+  including `gpt-realtime-2`, are unchanged.
+- Home Assistant actions in GPT-Live mode go through client delegation and
+  the official Assist MCP server. The assistant is told the result only after
+  Home Assistant returns it.
+- Echo probe is off by default. It records uplink during playback and does
+  not enable barge-in. A capped barge-in test is not justified until that
+  recording shows the microphone is usable during playback.
+
 ## 0.6.0
 
 > ⚠️ **This update has two parts — please update both:**

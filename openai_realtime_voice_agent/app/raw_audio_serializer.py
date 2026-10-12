@@ -50,6 +50,10 @@ class RawAudioSerializer(FrameSerializer):
         # Resets the dangling-VAD guard's "speech since wake" tracker. Set by
         # WebSocketHandler.build_pipeline.
         self._on_wake = None
+        # Async callback for {"type":"conversation_end"}. The Voice PE sends this
+        # when a follow-up window ends. The gpt-realtime-2 path leaves it unset
+        # and ignores the message. The GPT-Live path closes its Live session.
+        self._on_conversation_end = None
 
     def set_interrupt_handler(self, handler):
         """Register the async no-arg callback fired on a device 'interrupt'."""
@@ -66,6 +70,10 @@ class RawAudioSerializer(FrameSerializer):
     def set_wake_handler(self, handler):
         """Register the async no-arg callback fired on a device 'wake'."""
         self._on_wake = handler
+
+    def set_conversation_end_handler(self, handler):
+        """Register the async no-arg callback fired on device 'conversation_end'."""
+        self._on_conversation_end = handler
 
     @property
     def type(self) -> FrameSerializerType:
@@ -122,6 +130,13 @@ class RawAudioSerializer(FrameSerializer):
                         await self._on_mic_flush()
                     except Exception as e:
                         logger.warning(f"⚠️ device mic-flush handler failed: {e!r}")
+            elif isinstance(data, dict) and data.get("type") == "conversation_end":
+                logger.info("conversation_end received")
+                if self._on_conversation_end is not None:
+                    try:
+                        await self._on_conversation_end()
+                    except Exception as e:
+                        logger.warning(f"⚠️ device conversation_end handler failed: {e!r}")
             elif isinstance(data, dict) and data.get("type") == "wake":
                 # Sent by va_client on every wake (start_session). Marks a fresh
                 # turn boundary for the dangling-VAD guard: until the user
