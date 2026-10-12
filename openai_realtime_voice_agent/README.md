@@ -1,7 +1,8 @@
 # OpenAI Realtime 2 Voice Agent
 
-Talk to your home with **OpenAI's `gpt-realtime-2`** speech-to-speech model. This
-Home Assistant add-on runs the realtime voice session and bridges it to Home
+Talk to your home with OpenAI speech-to-speech. The default session is
+**`gpt-realtime-2`**. Set **Voice provider** to `gpt_live` to use **`gpt-live-1`**
+instead. This Home Assistant add-on runs the voice session and bridges it to Home
 Assistant device control (via the official **MCP Server** integration) and optional
 **web search** — so you can say *"alexa, turn off the bedroom lamp"* or *"what's the
 weather tomorrow?"* and get a spoken answer.
@@ -13,21 +14,27 @@ firmware** (a thin client that talks a small WebSocket protocol); it is not a
 drop-in for the stock HA voice pipeline.
 
 > **You need both halves.** This add-on does nothing without the **Voice PE firmware**
-> that streams audio to it. The GPT-Live path expects the HaipeiWang Voice PE
-> firmware branch `feature/gpt-live-voice-pe`, with `barge_in` left false.
-> The default provider is still `openai_realtime` (`gpt-realtime-2`). Set
-> **Voice provider** to `gpt_live` to use `gpt-live-1`. Play that test through
+> that streams audio to it. Use
+> [SandorDrift23/home-assistant-voice-pe](https://github.com/SandorDrift23/home-assistant-voice-pe/tree/feature/gpt-live-voice-pe)
+> branch `feature/gpt-live-voice-pe`. Leave `barge_in` false. Play the test through
 > a powered speaker on the Voice PE 3.5 mm jack, away from the microphones.
 
 ## What it does
 
-- **Natural voice conversations** with `gpt-realtime-2` (speech in → speech out, no
-  separate STT/TTS step).
+- **Natural voice conversations** (speech in → speech out, no separate STT/TTS step).
+  `openai_realtime` uses `gpt-realtime-2`. `gpt_live` uses `gpt-live-1`.
+- **`gpt-live-1` can listen while it speaks.** That is the model's duplex behavior.
+  The Voice PE does not do that yet: with `barge_in` false the microphone closes
+  during playback, and a reply is interrupted with "stop" or the center button.
+  An echo recording, off by default, is how we decide whether the microphone can
+  stay open. Do not turn `barge_in` on before that recording shows the uplink is
+  intelligible.
 - **Controls Home Assistant** through the official HA *MCP Server* integration —
   lights, switches, scenes, climate, etc., scoped to the entities you expose to
   Assist.
-- **Web search** (on by default) — the assistant can look things up online
+- **Web search** (on by default for `gpt-realtime-2`) — the assistant can look things up online
   (weather, news, facts) via a single OpenAI call. Turn it off if you don't want it.
+  `gpt-live-1` does not use that search path.
 - **Tunable from the UI** — model, voice, speaking speed, turn detection, a
   post-reply follow-up window, transcription language, and more. Every option has
   inline help on the Configuration tab.
@@ -35,13 +42,14 @@ drop-in for the stock HA voice pipeline.
 ## Quick start
 
 1. Add this repository to Home Assistant (Settings → Add-ons → Add-on Store → ⋮ →
-   **Repositories**): `https://github.com/xandervanerven/ha-openai-realtime`
+   **Repositories**): `https://github.com/SandorDrift23/ha-openai-realtime`
 2. Install **OpenAI Realtime 2 Voice Agent** and open its **Configuration** tab.
 3. Paste your **OpenAI API key**, install the HA **MCP Server** integration, expose
    a few entities to Assist, and **Start** the add-on.
 4. Flash the **Voice PE firmware** from
-   **[xandervanerven/home-assistant-voice-pe](https://github.com/xandervanerven/home-assistant-voice-pe)**
-   (one-click adopt-and-update in ESPHome Builder; full steps in that repo).
+   **[SandorDrift23/home-assistant-voice-pe](https://github.com/SandorDrift23/home-assistant-voice-pe/tree/feature/gpt-live-voice-pe)**,
+   branch `feature/gpt-live-voice-pe`. For `gpt-live-1`, set **Voice provider** to
+   `gpt_live` and leave the echo recording off for the first listening test.
 
 Full step-by-step instructions are on the **Documentation** tab (`DOCS.md`).
 
