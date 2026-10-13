@@ -380,12 +380,6 @@ class Application:
         except (TypeError, ValueError):
             playback_prebuffer_ms = 150
         playback_prebuffer_ms = max(0, min(2000, playback_prebuffer_ms))
-        try:
-            phase_idle_debounce_ms = int(os.environ.get("PHASE_IDLE_DEBOUNCE_MS", "1500"))
-        except (TypeError, ValueError):
-            phase_idle_debounce_ms = 1500
-        phase_idle_debounce_ms = max(0, min(10000, phase_idle_debounce_ms))
-
         voice_provider = os.environ.get("VOICE_PROVIDER", "gpt_live").strip().lower()
         if voice_provider in ("", "null", "none"):
             voice_provider = "gpt_live"
@@ -394,6 +388,14 @@ class Application:
                 f"⚠️ Unknown VOICE_PROVIDER {voice_provider!r}, falling back to gpt_live"
             )
             voice_provider = "gpt_live"
+        # gpt-live-1 TTS often pauses 1.5–3 s between fragments; 1500 ms idle
+        # made the device flap idle→listening→replying mid-answer.
+        idle_default_ms = "4000" if voice_provider == "gpt_live" else "1500"
+        try:
+            phase_idle_debounce_ms = int(os.environ.get("PHASE_IDLE_DEBOUNCE_MS", idle_default_ms))
+        except (TypeError, ValueError):
+            phase_idle_debounce_ms = int(idle_default_ms)
+        phase_idle_debounce_ms = max(0, min(10000, phase_idle_debounce_ms))
         # The echo probe opens the mic during playback for a recording only.
         # It is ignored on the realtime path so that path cannot be asked to
         # listen to its own speaker.

@@ -14,7 +14,13 @@ from pathlib import Path
 
 from app.device_protocol import hello_message
 from app.echo_probe import BARGE_IN_TEST_JUSTIFIED, EchoProbe
-from app.gpt_live import LIVE_MODEL, LIVE_SAMPLE_RATE, GptLiveConnection, GptLiveSession
+from app.gpt_live import (
+    DEFAULT_IDLE_DEBOUNCE_S,
+    LIVE_MODEL,
+    LIVE_SAMPLE_RATE,
+    GptLiveConnection,
+    GptLiveSession,
+)
 from app.live_delegation import AssistDelegator, function_tools_from_schema
 
 
@@ -55,7 +61,7 @@ def _tone(ms: int, amplitude: int = 8000) -> bytes:
 
 
 async def _say(session) -> None:
-    """Feed speech that opens the gate, then trailing silence that closes it."""
+    """Feed speech that opens the gate, then quiet frames that still stream."""
     clock = {"t": 0.0}
     session._now = lambda: clock["t"]
     await session.on_uplink(_tone(150))
@@ -146,6 +152,8 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(appended), 2)
         # Streaming sends short real-time chunks, not one dumped utterance.
         self.assertLess(len(base64.b64decode(appended[0]["audio"])), 20_000)
+        # Quiet frames after speech still stream (no mute-on-pause).
+        self.assertTrue(self.session._gate.open)
 
         await self.session.handle_server_event({"type": "session.input_transcript.delta", "delta": "lamp"})
         reply = b"\x03\x00\x04\x00"
@@ -191,6 +199,36 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         await self.session.handle_server_event({"type": "session.closed"})
         await closing
         self.assertFalse(self.session.ready)
+
+    async def test_reply_stays_replying_across_audio_gaps(self):
+        """TTS fragments with multi-second gaps must not emit idle mid-answer."""
+        harness = SessionHarness(await _quiet_delegator(), idle_debounce_s=0.25)
+        session = harness.session
+        await session.start()
+        await session.handle_server_event({"type": "session.started"})
+        await session.on_wake()
+        await _say(session)
+        first = base64.b64encode(b"\x01\x00").decode("ascii")
+        second = base64.b64encode(b"\x02\x00").decode("ascii")
+        await session.handle_server_event({
+            "type": "session.output_audio.delta",
+            "delta": first,
+        })
+        self.assertEqual(harness.phases[-1], "replying")
+        await asyncio.sleep(0.1)
+        await session.handle_server_event({
+            "type": "session.output_transcript.delta",
+            "delta": " weiter",
+        })
+        await asyncio.sleep(0.2)
+        self.assertEqual(harness.phases[-1], "replying")
+        await session.handle_server_event({
+            "type": "session.output_audio.delta",
+            "delta": second,
+        })
+        self.assertEqual(harness.played, [b"\x01\x00", b"\x02\x00"])
+        self.assertNotIn("idle", harness.phases)
+        self.assertGreaterEqual(DEFAULT_IDLE_DEBOUNCE_S, 4.0)
 
     async def test_dead_socket_does_not_raise_on_every_mic_frame(self):
         lost = {"n": 0}
