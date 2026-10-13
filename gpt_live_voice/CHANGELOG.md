@@ -2,6 +2,13 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.9.0
+
+- Version series aligned with firmware `sandordrift23.gpt-live-voice-pe` `0.9.0`.
+  Use that firmware build so `echo_probe` in `hello` is applied on the device
+  (older forks pulled `va_client` from another repo and ignored the flag).
+- Keep `barge_in` off until an echo-probe recording shows a clean uplink.
+
 ## 0.8.1
 
 - Speech is streamed to gpt-live-1 in real time after the first loud frames.
