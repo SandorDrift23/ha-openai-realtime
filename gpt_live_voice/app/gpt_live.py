@@ -27,12 +27,11 @@ LIVE_URL = "wss://api.openai.com/v1/live/sessions"
 LIVE_MODEL = "gpt-live-1"
 LIVE_SAMPLE_RATE = 24000
 CLOSE_TIMEOUT_S = 15.0
-# Half duplex: the model must not hear the mic until the user has actually
-# spoken and paused. Forwarding the open follow-up window makes gpt-live-1
-# answer silence, the device closes the mic, and the cycle repeats.
-SPEECH_RMS = 450
-MIN_SPEECH_MS = 200
-END_SILENCE_MS = 600
+# Half duplex: keep silence off the Live socket, then stream at real time.
+# Dumping a whole utterance at once trips input_audio_rate_limit_exceeded.
+SPEECH_RMS = 300
+MIN_SPEECH_MS = 120
+END_SILENCE_MS = 700
 
 STOP_INSTRUCTION = (
     "The user stopped you. Stop speaking now and wait silently for the next "
@@ -60,7 +59,12 @@ def _rms(pcm: bytes) -> float:
 
 
 class SpeechGate:
-    """Hold microphone audio until a utterance has started and then paused."""
+    """Open the Live mic only after speech, then stream at real time.
+
+    Silence before the first loud frames is dropped. Once speech is confirmed,
+    every chunk is forwarded immediately so OpenAI never sees a burst dump.
+    After a short trailing silence the gate closes again until the next word.
+    """
 
     def __init__(
         self,
@@ -75,34 +79,34 @@ class SpeechGate:
         self.reset()
 
     def reset(self) -> None:
-        self._buf = bytearray()
         self._speech_bytes = 0
         self._silence_at: Optional[float] = None
         self.heard_speech = False
+        self.open = False
 
     def push(self, pcm: bytes, now: float) -> Optional[bytes]:
-        """Return one finished utterance, or None while still listening."""
+        """Return PCM to send now, or None while the mic should stay closed."""
         if not pcm:
             return None
-        if _rms(pcm) >= self._speech_rms:
-            self.heard_speech = True
-            self._silence_at = None
-            self._buf.extend(pcm)
+        loud = _rms(pcm) >= self._speech_rms
+        if loud:
             self._speech_bytes += len(pcm)
+            self._silence_at = None
+            if not self.open and self._speech_bytes >= self._min_speech_bytes:
+                self.open = True
+                self.heard_speech = True
+            if self.open:
+                return pcm
             return None
-        if not self.heard_speech:
+        if not self.open:
+            self._speech_bytes = 0
             return None
         if self._silence_at is None:
             self._silence_at = now
-        self._buf.extend(pcm)
-        if (now - self._silence_at) < self._end_silence_s:
-            return None
-        if self._speech_bytes < self._min_speech_bytes:
+        if (now - self._silence_at) >= self._end_silence_s:
             self.reset()
             return None
-        utterance = bytes(self._buf)
-        self.reset()
-        return utterance
+        return pcm
 
 
 SendFn = Callable[[dict], Awaitable[None]]
@@ -180,6 +184,8 @@ class GptLiveSession:
         self._drop_output = False
         self._armed = False
         self._hold_output = False
+        self._busy = False
+        self._close_after_busy = False
         self._gate = SpeechGate()
         self._now = time.monotonic
         self._started = False
@@ -266,25 +272,31 @@ class GptLiveSession:
         self._hold = None
         self._armed = False
         self._hold_output = False
+        self._close_after_busy = False
         self._input_muted = True
         self._gate.reset()
         await self._control_input(muted=True)
 
     async def on_uplink(self, pcm: bytes) -> None:
-        """Forward a finished utterance. Silence and playback leak stay local."""
+        """Stream speech in real time; drop silence until the user talks."""
         if self._echo is not None and pcm:
             self._echo.record("uplink", pcm)
         if self._hold == "interrupt" or self._reply_mute or self._phase == "replying":
             return
-        utterance = self._gate.push(pcm, self._now())
+        chunk = self._gate.push(pcm, self._now())
         if self._gate.heard_speech and self._phase != "listening":
             await self._set_phase("listening")
-        if not utterance:
+        if not chunk:
+            if not self._gate.open and self._armed and self._phase == "listening":
+                # Trailing silence closed the gate — mute Live until the next word.
+                self._input_muted = True
+                await self._control_input(muted=True)
             return
-        self._armed = True
-        self._input_muted = False
-        await self._control_input(muted=False)
-        await self._append_audio(utterance)
+        if not self._armed or self._input_muted:
+            self._armed = True
+            self._input_muted = False
+            await self._control_input(muted=False)
+        await self._append_audio(chunk)
 
     async def on_flush(self) -> None:
         self._odd = b""
@@ -298,6 +310,8 @@ class GptLiveSession:
         self._reply_mute = False
         self._armed = False
         self._hold_output = False
+        self._close_after_busy = False
+        self._busy = False
         self._input_muted = True
         self._cancel_idle()
         self._odd = b""
@@ -313,6 +327,12 @@ class GptLiveSession:
         await self._set_phase("idle")
 
     async def on_conversation_end(self) -> None:
+        if self._busy or self._hold_output:
+            # Follow-up window ended while a planner/tool injection is still
+            # running. Closing now causes context_injection_incomplete.
+            self._close_after_busy = True
+            logger.info("GPT-Live deferring session close until delegation finishes")
+            return
         await self.close()
 
     async def close(self) -> None:
@@ -388,40 +408,53 @@ class GptLiveSession:
         if not self._delegator.begin(delegation_id):
             logger.info("GPT-Live duplicate delegation %s ignored", delegation_id)
             return
+        self._busy = True
         self._hold_output = True
         if self._phase != "replying":
             await self._set_phase("thinking")
         try:
-            calls, question = await self._delegator.plan(self.transcript.text())
-        except Exception as exc:
-            logger.warning("GPT-Live delegation planner failed: %s", exc)
-            self._hold_output = False
+            try:
+                calls, question = await self._delegator.plan(self.transcript.text())
+            except Exception as exc:
+                logger.warning("GPT-Live delegation planner failed: %s", exc)
+                await self._append_context(
+                    "session.commentary.append",
+                    delegation_id,
+                    "That could not be confirmed. Say that briefly.",
+                )
+                return
+            if not calls:
+                if question:
+                    await self._append_context(
+                        "session.commentary.append", delegation_id, question
+                    )
+                return
+            looking_up = any(name == "web_search" for name, _ in calls)
             await self._append_context(
-                "session.commentary.append",
+                "session.thinking.append",
                 delegation_id,
-                "Home Assistant did not confirm that action. Say that it could not be confirmed.",
+                (
+                    "Looking that up. Stay silent until commentary arrives."
+                    if looking_up
+                    else "Checking Home Assistant. Stay silent until commentary arrives."
+                ),
             )
-            return
-        if not calls:
+            try:
+                commentary = await self._delegator.execute(calls)
+            except Exception as exc:
+                logger.warning("GPT-Live delegation tool failed: %s", exc)
+                commentary = (
+                    "That could not be confirmed. Say that briefly."
+                )
+            await self._append_context(
+                "session.commentary.append", delegation_id, commentary
+            )
+        finally:
             self._hold_output = False
-            if question:
-                await self._append_context("session.commentary.append", delegation_id, question)
-            return
-        await self._append_context(
-            "session.thinking.append",
-            delegation_id,
-            "Checking Home Assistant. No action has been taken yet.",
-        )
-        try:
-            commentary = await self._delegator.execute(calls)
-        except Exception as exc:
-            logger.warning("GPT-Live delegation tool failed: %s", exc)
-            commentary = (
-                "Home Assistant did not confirm that action. "
-                "Say that it could not be confirmed."
-            )
-        self._hold_output = False
-        await self._append_context("session.commentary.append", delegation_id, commentary)
+            self._busy = False
+            if self._close_after_busy:
+                self._close_after_busy = False
+                await self.close()
 
     async def _append_context(self, event_type: str, delegation_id: str, content: str) -> None:
         if not self.ready or not content:

@@ -1,141 +1,71 @@
 #!/usr/bin/with-contenv bashio
 set -e
 
-# --- 🔑 Basics ---
+# Everyday options (always present in options:)
 OPENAI_API_KEY=$(bashio::config 'openai_api_key')
 INSTRUCTIONS=$(bashio::config 'instructions')
 TRANSCRIPTION_LANGUAGE=$(bashio::config 'transcription_language')
-
-# --- 🗣️ Model & voice ---
-VOICE_PROVIDER=$(bashio::config 'voice_provider')
-OPENAI_MODEL=$(bashio::config 'openai_model')
 OPENAI_VOICE=$(bashio::config 'openai_voice')
-OPENAI_SPEED=$(bashio::config 'openai_speed')
-MAX_OUTPUT_TOKENS=$(bashio::config 'max_output_tokens')
-
-# --- 💬 Conversation ---
 FOLLOW_UP_LISTEN_SECONDS=$(bashio::config 'follow_up_listen_seconds')
-FOLLOW_UP_OPEN_DELAY_MS=$(bashio::config 'follow_up_open_delay_ms')
-WAKE_OPEN_DELAY_MS=$(bashio::config 'wake_open_delay_ms')
-VAD_EAGERNESS=$(bashio::config 'vad_eagerness')
-PHASE_IDLE_DEBOUNCE_MS=$(bashio::config 'phase_idle_debounce_ms')
-
-# --- 🌐 Web search ---
 ENABLE_WEB_SEARCH=$(bashio::config 'enable_web_search')
-WEB_SEARCH_MODEL=$(bashio::config 'web_search_model')
 
-# --- 🎚️ Audio ---
-PLAYBACK_PREBUFFER_MS=$(bashio::config 'playback_prebuffer_ms')
-NOISE_REDUCTION=$(bashio::config 'noise_reduction')
-
-# --- 🏠 Home Assistant ---
-HA_MCP_URL=$(bashio::config 'ha_mcp_url')
-LONGLIVED_TOKEN=$(bashio::config 'longlived_token')
-MCP_TOOL_ALLOWLIST=$(bashio::config 'mcp_tool_allowlist')
-LIVE_PLANNER_MODEL=$(bashio::config 'live_planner_model')
-
-# --- ⚙️ Advanced ---
-WEBSOCKET_PORT=$(bashio::config 'websocket_port')
-SESSION_REUSE_TIMEOUT_SECONDS=$(bashio::config 'session_reuse_timeout_seconds')
-MAX_CONTEXT_MESSAGES=$(bashio::config 'max_context_messages')
-TRANSCRIPTION_MODEL=$(bashio::config 'transcription_model')
-
-# --- 🔍 Debug ---
-ENABLE_RECORDING=$(bashio::config 'enable_recording')
-ENABLE_ECHO_PROBE=$(bashio::config 'enable_echo_probe')
-
-# Validate required configuration
 if [ -z "$OPENAI_API_KEY" ]; then
     bashio::log.error "OPENAI_API_KEY is required but not set"
     exit 1
 fi
 
-# Export environment variables
 export OPENAI_API_KEY
 export INSTRUCTIONS
 export TRANSCRIPTION_LANGUAGE
-export VOICE_PROVIDER
-export OPENAI_MODEL
 export OPENAI_VOICE
-export OPENAI_SPEED
-export MAX_OUTPUT_TOKENS
 export FOLLOW_UP_LISTEN_SECONDS
-export FOLLOW_UP_OPEN_DELAY_MS
-export WAKE_OPEN_DELAY_MS
-export VAD_EAGERNESS
-export PHASE_IDLE_DEBOUNCE_MS
 export ENABLE_WEB_SEARCH
-export WEB_SEARCH_MODEL
-export PLAYBACK_PREBUFFER_MS
-export NOISE_REDUCTION
-export LONGLIVED_TOKEN
-export MCP_TOOL_ALLOWLIST
-export LIVE_PLANNER_MODEL
-export WEBSOCKET_PORT
-export SESSION_REUSE_TIMEOUT_SECONDS
-export MAX_CONTEXT_MESSAGES
-export TRANSCRIPTION_MODEL
-export ENABLE_RECORDING
-export ENABLE_ECHO_PROBE
 
-# The *_custom escape hatches (🗣️/🌐/⚙️) are optional WITHOUT defaults —
-# bashio::config prints "null" for unset optionals, and main.py's
-# _resolve_choice would treat that literal string as a real custom value.
-# Only export when actually set.
-if bashio::config.has_value 'openai_model_custom'; then
-    OPENAI_MODEL_CUSTOM=$(bashio::config 'openai_model_custom')
-    export OPENAI_MODEL_CUSTOM
-fi
-if bashio::config.has_value 'openai_voice_custom'; then
-    OPENAI_VOICE_CUSTOM=$(bashio::config 'openai_voice_custom')
-    export OPENAI_VOICE_CUSTOM
-fi
-if bashio::config.has_value 'web_search_model_custom'; then
-    WEB_SEARCH_MODEL_CUSTOM=$(bashio::config 'web_search_model_custom')
-    export WEB_SEARCH_MODEL_CUSTOM
-fi
-if bashio::config.has_value 'live_planner_model_custom'; then
-    LIVE_PLANNER_MODEL_CUSTOM=$(bashio::config 'live_planner_model_custom')
-    export LIVE_PLANNER_MODEL_CUSTOM
-fi
-if bashio::config.has_value 'transcription_model_custom'; then
-    TRANSCRIPTION_MODEL_CUSTOM=$(bashio::config 'transcription_model_custom')
-    export TRANSCRIPTION_MODEL_CUSTOM
-fi
+# Optional fields have no defaults — bashio prints "null" when unset, so only
+# export when the user revealed them via "Show unused optional…".
+# Absent vars → main.py hardwired defaults (gpt_live, delays, planner, etc.).
+_export_if_set() {
+    local key="$1"
+    local env_name="$2"
+    if bashio::config.has_value "$key"; then
+        local value
+        value=$(bashio::config "$key")
+        export "$env_name=$value"
+    fi
+}
 
-# Legacy server_vad escape hatch (⚙️ Advanced, optional WITHOUT defaults).
-# bashio::config prints the string "null" for unset optional keys, which would
-# crash main.py's float()/int() parsing — so only export when actually set.
-# Unset = main.py's hardwired defaults (semantic_vad; 0.5/300/800 if server_vad
-# is ever selected).
-if bashio::config.has_value 'turn_detection_type'; then
-    TURN_DETECTION_TYPE=$(bashio::config 'turn_detection_type')
-    export TURN_DETECTION_TYPE
-fi
-if bashio::config.has_value 'vad_threshold'; then
-    VAD_THRESHOLD=$(bashio::config 'vad_threshold')
-    export VAD_THRESHOLD
-fi
-if bashio::config.has_value 'vad_prefix_padding_ms'; then
-    VAD_PREFIX_PADDING_MS=$(bashio::config 'vad_prefix_padding_ms')
-    export VAD_PREFIX_PADDING_MS
-fi
-if bashio::config.has_value 'vad_silence_duration_ms'; then
-    VAD_SILENCE_DURATION_MS=$(bashio::config 'vad_silence_duration_ms')
-    export VAD_SILENCE_DURATION_MS
-fi
+_export_if_set 'openai_voice_custom' 'OPENAI_VOICE_CUSTOM'
+_export_if_set 'voice_provider' 'VOICE_PROVIDER'
+_export_if_set 'openai_model' 'OPENAI_MODEL'
+_export_if_set 'openai_model_custom' 'OPENAI_MODEL_CUSTOM'
+_export_if_set 'openai_speed' 'OPENAI_SPEED'
+_export_if_set 'max_output_tokens' 'MAX_OUTPUT_TOKENS'
+_export_if_set 'follow_up_open_delay_ms' 'FOLLOW_UP_OPEN_DELAY_MS'
+_export_if_set 'wake_open_delay_ms' 'WAKE_OPEN_DELAY_MS'
+_export_if_set 'vad_eagerness' 'VAD_EAGERNESS'
+_export_if_set 'phase_idle_debounce_ms' 'PHASE_IDLE_DEBOUNCE_MS'
+_export_if_set 'web_search_model' 'WEB_SEARCH_MODEL'
+_export_if_set 'web_search_model_custom' 'WEB_SEARCH_MODEL_CUSTOM'
+_export_if_set 'playback_prebuffer_ms' 'PLAYBACK_PREBUFFER_MS'
+_export_if_set 'noise_reduction' 'NOISE_REDUCTION'
+_export_if_set 'ha_mcp_url' 'HA_MCP_URL'
+_export_if_set 'longlived_token' 'LONGLIVED_TOKEN'
+_export_if_set 'mcp_tool_allowlist' 'MCP_TOOL_ALLOWLIST'
+_export_if_set 'live_planner_model' 'LIVE_PLANNER_MODEL'
+_export_if_set 'live_planner_model_custom' 'LIVE_PLANNER_MODEL_CUSTOM'
+_export_if_set 'websocket_port' 'WEBSOCKET_PORT'
+_export_if_set 'session_reuse_timeout_seconds' 'SESSION_REUSE_TIMEOUT_SECONDS'
+_export_if_set 'max_context_messages' 'MAX_CONTEXT_MESSAGES'
+_export_if_set 'transcription_model' 'TRANSCRIPTION_MODEL'
+_export_if_set 'transcription_model_custom' 'TRANSCRIPTION_MODEL_CUSTOM'
+_export_if_set 'turn_detection_type' 'TURN_DETECTION_TYPE'
+_export_if_set 'vad_threshold' 'VAD_THRESHOLD'
+_export_if_set 'vad_prefix_padding_ms' 'VAD_PREFIX_PADDING_MS'
+_export_if_set 'vad_silence_duration_ms' 'VAD_SILENCE_DURATION_MS'
+_export_if_set 'enable_recording' 'ENABLE_RECORDING'
+_export_if_set 'enable_echo_probe' 'ENABLE_ECHO_PROBE'
 
-# Removed options (v0.4.29) — no longer exported; main.py env defaults take
-# over: SEMANTIC_VAD_CREATE_RESPONSE=true, ENABLE_DISCONNECT_TOOL=false,
-# INTERRUPT_RESPONSE=false, DEVICE_INPUT_SAMPLE_RATE=16000.
+# SUPERVISOR_TOKEN is provided by Home Assistant when homeassistant_api: true
 
-# Export HA_MCP_URL if set (empty string means use default in main.py)
-if [ -n "$HA_MCP_URL" ]; then
-    export HA_MCP_URL
-fi
-
-# SUPERVISOR_TOKEN is automatically provided by Home Assistant when homeassistant_api: true
-
-# Start the application
 export PYTHONUNBUFFERED=1
 exec python3 -m app.main

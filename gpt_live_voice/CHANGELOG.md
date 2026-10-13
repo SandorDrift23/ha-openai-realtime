@@ -2,6 +2,18 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.8.1
+
+- Speech is streamed to gpt-live-1 in real time after the first loud frames.
+  Dumping a whole utterance at once (which caused
+  `input_audio_rate_limit_exceeded`) is gone.
+- The Live session stays open while a planner/web-search injection is still
+  running, so follow-up timeout no longer ends the turn with
+  `context_injection_incomplete`.
+- Configuration page shows only the everyday fields. Voice provider, Realtime
+  model, delays, planner, and other tuning live under "Show unused optional
+  configuration options".
+
 ## 0.8.0
 
 - Renamed to **GPT-Live Voice**. The add-on slug is now `gpt_live_voice`.

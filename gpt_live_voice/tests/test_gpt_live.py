@@ -55,12 +55,12 @@ def _tone(ms: int, amplitude: int = 8000) -> bytes:
 
 
 async def _say(session) -> None:
-    """Feed a short loud utterance and the pause that commits it."""
+    """Feed speech that opens the gate, then trailing silence that closes it."""
     clock = {"t": 0.0}
     session._now = lambda: clock["t"]
-    await session.on_uplink(_tone(250))
-    await session.on_uplink(_tone(20, 0))
-    clock["t"] = 0.7
+    await session.on_uplink(_tone(150))
+    await session.on_uplink(_tone(100))
+    clock["t"] = 0.8
     await session.on_uplink(_tone(20, 0))
 
 
@@ -139,10 +139,13 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         await self.session.start()
         await self.session.handle_server_event({"type": "session.started", "session": {"id": "sess_test"}})
         await self.session.on_wake()
+        await self.session.on_uplink(_tone(20, 0))
+        self.assertNotIn("session.input_audio.append", self.harness.types())
         await _say(self.session)
-        self.assertIn("session.input_audio.append", self.harness.types())
         appended = [e for e in self.harness.sent if e["type"] == "session.input_audio.append"]
-        self.assertGreater(len(base64.b64decode(appended[-1]["audio"])), 1000)
+        self.assertGreaterEqual(len(appended), 2)
+        # Streaming sends short real-time chunks, not one dumped utterance.
+        self.assertLess(len(base64.b64decode(appended[0]["audio"])), 20_000)
 
         await self.session.handle_server_event({"type": "session.input_transcript.delta", "delta": "lamp"})
         reply = b"\x03\x00\x04\x00"
@@ -314,6 +317,48 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         })
         commentary = [e for e in self.harness.sent if e["type"] == "session.commentary.append"]
         self.assertEqual(len(commentary), 1)
+
+    async def test_conversation_end_waits_for_busy_delegation(self):
+        release = asyncio.Event()
+
+        async def complete(transcript, tools):
+            await release.wait()
+            return _Response([_Item("function_call", "web_search", '{"query":"weather"}')])
+
+        async def call_tool(name, arguments):
+            return "Tomorrow will be mild."
+
+        self.session._delegator = AssistDelegator(complete, call_tool, [])
+        await self.session.start()
+        await self.session.handle_server_event({"type": "session.started"})
+        await self.session.handle_server_event({
+            "type": "session.input_transcript.delta",
+            "delta": "weather tomorrow",
+        })
+        task = asyncio.create_task(self.session.handle_server_event({
+            "type": "session.delegation.created",
+            "delegation": {"id": "item_busy", "target": "client"},
+        }))
+        await asyncio.sleep(0)
+        await self.session.on_conversation_end()
+        self.assertNotIn("session.close", self.harness.types())
+        self.assertTrue(self.session._close_after_busy)
+
+        async def finish_close():
+            for _ in range(100):
+                if "session.close" in self.harness.types():
+                    await self.session.handle_server_event({"type": "session.closed"})
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError("session.close was never sent")
+
+        closer = asyncio.create_task(finish_close())
+        release.set()
+        await task
+        await closer
+        commentary = [e for e in self.harness.sent if e["type"] == "session.commentary.append"]
+        self.assertTrue(any("mild" in e["content"] for e in commentary))
+        self.assertFalse(self.session.ready)
 
     def test_hello_leaves_barge_in_off_and_probe_defaults_off(self):
         plain = hello_message(
