@@ -8,9 +8,13 @@ playback, transcripts, follow-up audio, session close, and barge-in left off.
 import asyncio
 import base64
 import json
+import os
 import struct
 import unittest
 from pathlib import Path
+
+# Avoid loading a developer .env with SLIM_VOICE=true into unit tests.
+os.environ["GPT_LIVE_SKIP_DOTENV"] = "true"
 
 from app.device_protocol import hello_message
 from app.echo_probe import BARGE_IN_TEST_JUSTIFIED, EchoProbe
@@ -140,6 +144,20 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start["session"]["delegation"], {"type": "client"})
         self.assertNotIn("gpt-realtime", json.dumps(start))
         self.assertEqual(LIVE_SAMPLE_RATE, 24000)
+
+    async def test_slim_voice_skips_planner_on_delegation(self):
+        harness = SessionHarness(await _quiet_delegator())
+        harness.session._slim_voice = True
+        await harness.session.start()
+        await harness.session.handle_server_event({"type": "session.started"})
+        await harness.session.handle_server_event({
+            "type": "session.delegation.created",
+            "delegation": {"id": "item_slim", "target": "client"},
+        })
+        commentary = [e for e in harness.sent if e["type"] == "session.commentary.append"]
+        self.assertEqual(len(commentary), 1)
+        self.assertIn("No tools are available", commentary[0]["content"])
+        self.assertNotIn("session.thinking.append", harness.types())
 
     async def test_half_duplex_playback_follow_up_and_close(self):
         await self.session.start()

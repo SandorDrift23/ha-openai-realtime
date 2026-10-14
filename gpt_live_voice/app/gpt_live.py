@@ -44,11 +44,18 @@ STOP_INSTRUCTION = (
 
 LIVE_INSTRUCTION_SUFFIX = (
     " You are in a live voice session. You do not call tools yourself. A "
-    "delegation brings Home Assistant results and web lookups back as "
+    "delegation may bring Home Assistant results and web lookups back as "
     "commentary. Stay silent while that lookup runs, then speak only what "
     "the commentary says. Speak an action as done only after that commentary "
-    "confirms it. If the device or action is unclear, ask one short question. "
-    "Keep replies short enough to say aloud."
+    "confirms it. If no tool result arrives, answer the user directly from "
+    "the conversation. Keep replies short enough to say aloud."
+)
+
+SLIM_LIVE_INSTRUCTION_SUFFIX = (
+    " You are in a live voice session for a spoken conversation only. "
+    "There are no home-control or web-search tools. Answer the user "
+    "directly in short, natural speech. Do not claim you looked anything up "
+    "or controlled a device."
 )
 
 def _rms(pcm: bytes) -> float:
@@ -166,10 +173,13 @@ class GptLiveSession:
         echo_probe: Optional[EchoProbe] = None,
         idle_debounce_s: float = DEFAULT_IDLE_DEBOUNCE_S,
         on_transcript: Optional[Callable[[str, str], None]] = None,
+        slim_voice: bool = False,
     ):
         self.voice = voice or "marin"
-        self.instructions = (instructions or "").strip() + LIVE_INSTRUCTION_SUFFIX
+        suffix = SLIM_LIVE_INSTRUCTION_SUFFIX if slim_voice else LIVE_INSTRUCTION_SUFFIX
+        self.instructions = (instructions or "").strip() + suffix
         self._delegator = delegator
+        self._slim_voice = slim_voice
         self._on_phase = on_phase
         self._on_output_audio = on_output_audio
         self._echo = echo_probe
@@ -440,6 +450,15 @@ class GptLiveSession:
         if self._phase != "replying":
             await self._set_phase("thinking")
         try:
+            # Slim conversation profile: skip planner latency entirely.
+            if self._slim_voice:
+                await self._append_context(
+                    "session.commentary.append",
+                    delegation_id,
+                    "Answer the user directly from the conversation. "
+                    "No tools are available.",
+                )
+                return
             try:
                 calls, question = await self._delegator.plan(self.transcript.text())
             except Exception as exc:

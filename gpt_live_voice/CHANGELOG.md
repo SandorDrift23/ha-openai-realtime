@@ -2,6 +2,12 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.9.4
+
+- Local Windows slim profile: `SLIM_VOICE=true` + `.env.example` + `run_local.ps1`
+  + `LOCAL.md`. Conversation-only (no web search / MCP / echo probe), shorter
+  buffers, turn-based follow-up off for lower latency while iterating.
+
 ## 0.9.3
 
 - Fix web-search / tool turns cut after the filler: idle no longer fires from

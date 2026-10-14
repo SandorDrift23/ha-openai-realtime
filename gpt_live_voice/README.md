@@ -55,6 +55,11 @@ drop-in for the stock HA voice pipeline.
 
 Full step-by-step instructions are on the **Documentation** tab (`DOCS.md`).
 
+## Local Windows (slim voice)
+
+For faster development without the HA add-on, see [LOCAL.md](LOCAL.md):
+`.env` + `SLIM_VOICE=true` + Voice PE stub `esphome-builder.local-windows.yaml`.
+
 ## Credits
 
 - Fork of **[xandervanerven/ha-openai-realtime](https://github.com/xandervanerven/ha-openai-realtime)**, itself a fork of **[fjfricke/ha-openai-realtime](https://github.com/fjfricke/ha-openai-realtime)** (Felix Fricke).

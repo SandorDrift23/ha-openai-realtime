@@ -55,7 +55,49 @@ def _resolve_choice(env_var: str, custom_env_var: str, default: str) -> str:
         return default
     return choice or default
 
-dotenv.load_dotenv()
+def _load_env_file() -> None:
+    """Load gpt_live_voice/.env even when started from another working directory."""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    dotenv.load_dotenv(env_path)
+    dotenv.load_dotenv()  # also allow CWD .env to override
+
+
+def _apply_slim_voice_defaults() -> None:
+    """Step-1 local profile: conversation only, low latency, no HA/tools."""
+    flag = os.environ.get("SLIM_VOICE", "").strip().lower()
+    if flag not in ("1", "true", "yes", "on"):
+        return
+    defaults = {
+        "VOICE_PROVIDER": "gpt_live",
+        "ENABLE_WEB_SEARCH": "false",
+        "ENABLE_ECHO_PROBE": "false",
+        "ENABLE_RECORDING": "false",
+        "ENABLE_DISCONNECT_TOOL": "false",
+        "FOLLOW_UP_LISTEN_SECONDS": "0",
+        "PLAYBACK_PREBUFFER_MS": "80",
+        "WAKE_OPEN_DELAY_MS": "500",
+        "FOLLOW_UP_OPEN_DELAY_MS": "500",
+        "PHASE_IDLE_DEBOUNCE_MS": "3000",
+        "WEBSOCKET_HOST": "0.0.0.0",
+        "WEBSOCKET_PORT": "8080",
+    }
+    for key, value in defaults.items():
+        os.environ.setdefault(key, value)
+    # Slim means no Assist bridge unless the user explicitly set a token.
+    if not (os.environ.get("LONGLIVED_TOKEN") or os.environ.get("SUPERVISOR_TOKEN")):
+        os.environ.pop("HA_MCP_URL", None)
+    logger.info(
+        "SLIM_VOICE on — gpt-live conversation only "
+        "(no web search, no echo probe, follow-up=0)"
+    )
+
+
+# Do not auto-apply SLIM_VOICE during unit tests (they import this module).
+if os.environ.get("GPT_LIVE_SKIP_DOTENV", "").strip().lower() not in (
+    "1", "true", "yes", "on",
+):
+    _load_env_file()
+    _apply_slim_voice_defaults()
 
 
 class SafeRealtimeLLMService(OpenAIRealtimeLLMService):
@@ -800,6 +842,13 @@ class Application:
         def on_transcript(role: str, delta: str) -> None:
             logger.info(f"GPT-Live {role} transcript: {delta}")
 
+        slim = os.environ.get("SLIM_VOICE", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        )
+        if slim:
+            tools = []
+            logger.info("SLIM_VOICE — GPT-Live tools disabled for conversation-only mode")
+
         session = GptLiveSession(
             voice=self.voice,
             instructions=self.instructions,
@@ -809,6 +858,7 @@ class Application:
             echo_probe=probe,
             idle_debounce_s=self.phase_idle_debounce_s,
             on_transcript=on_transcript,
+            slim_voice=slim,
         )
         connection = GptLiveConnection(session, self.openai_api_key)
         self.live_connection = connection
