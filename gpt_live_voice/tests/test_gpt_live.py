@@ -396,6 +396,54 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("mild" in e["content"] for e in commentary))
         self.assertFalse(self.session.ready)
 
+    async def test_post_tool_answer_plays_after_filler_idle_race(self):
+        """Filler must not idle away the spoken web-search result."""
+        release = asyncio.Event()
+
+        async def complete(transcript, tools):
+            await release.wait()
+            return _Response([_Item("function_call", "web_search", '{"query":"weather"}')])
+
+        async def call_tool(name, arguments):
+            return "Tomorrow will be mild in Berlin."
+
+        harness = SessionHarness(await _quiet_delegator(), idle_debounce_s=0.15)
+        session = harness.session
+        session._delegator = AssistDelegator(complete, call_tool, [])
+        await session.start()
+        await session.handle_server_event({"type": "session.started"})
+        await session.on_wake()
+        await _say(session)
+        filler = base64.b64encode(b"\x01\x00").decode("ascii")
+        await session.handle_server_event({
+            "type": "session.output_audio.delta",
+            "delta": filler,
+        })
+        self.assertEqual(harness.phases[-1], "replying")
+        task = asyncio.create_task(session.handle_server_event({
+            "type": "session.delegation.created",
+            "delegation": {"id": "item_weather", "target": "client"},
+        }))
+        await asyncio.sleep(0)
+        # Late filler transcript must not arm a killing idle during the tool.
+        await session.handle_server_event({
+            "type": "session.output_transcript.delta",
+            "delta": "Einen Moment",
+        })
+        await asyncio.sleep(0.2)
+        self.assertNotEqual(harness.phases[-1], "idle")
+        release.set()
+        await task
+        self.assertTrue(session._awaiting_result_speech)
+        answer = base64.b64encode(b"\x02\x00\x03\x00").decode("ascii")
+        await session.handle_server_event({
+            "type": "session.output_audio.delta",
+            "delta": answer,
+        })
+        self.assertIn(b"\x02\x00\x03\x00", harness.played)
+        self.assertEqual(harness.phases[-1], "replying")
+        self.assertFalse(session._awaiting_result_speech)
+
     def test_hello_leaves_barge_in_off_and_probe_defaults_off(self):
         plain = hello_message(
             follow_up_ms=8000,

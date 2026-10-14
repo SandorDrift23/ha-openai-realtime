@@ -190,6 +190,9 @@ class GptLiveSession:
         self._hold_output = False
         self._busy = False
         self._close_after_busy = False
+        # True after commentary/thinking injection until the model speaks again.
+        # Prevents idle-from-filler from dropping the real post-tool answer.
+        self._awaiting_result_speech = False
         self._gate = SpeechGate()
         self._now = time.monotonic
         self._started = False
@@ -277,6 +280,7 @@ class GptLiveSession:
         self._armed = False
         self._hold_output = False
         self._close_after_busy = False
+        self._awaiting_result_speech = False
         self._input_muted = True
         self._gate.reset()
         await self._control_input(muted=True)
@@ -316,6 +320,7 @@ class GptLiveSession:
         self._hold_output = False
         self._close_after_busy = False
         self._busy = False
+        self._awaiting_result_speech = False
         self._input_muted = True
         self._cancel_idle()
         self._odd = b""
@@ -371,8 +376,14 @@ class GptLiveSession:
             delta = event.get("delta") or ""
             self.transcript.add_assistant(delta)
             self._note_transcript("assistant", delta)
-            # Transcript can continue across audio gaps — keep idle from firing.
-            if self._phase == "replying":
+            # Do not arm idle from filler/transcript while a tool is running or
+            # we are waiting for the spoken result — that cut weather answers.
+            if (
+                self._phase == "replying"
+                and not self._busy
+                and not self._hold_output
+                and not self._awaiting_result_speech
+            ):
                 self._arm_idle()
         elif kind == "session.delegation.created":
             await self._on_delegation(event)
@@ -396,10 +407,9 @@ class GptLiveSession:
             return
         if not pcm or self._hold_output:
             return
-        # After a finished turn we ignore orphan TTS until the user speaks again.
-        # While still in (or resuming) a reply, never drop fragments just because
-        # an aggressive idle cleared _armed — that caused chopped answers.
-        if self._phase == "idle" and not self._armed:
+        # Orphan TTS after a finished turn is ignored. Post-tool result speech
+        # must still play even if filler idle briefly won the race.
+        if self._phase == "idle" and not self._armed and not self._awaiting_result_speech:
             return
         if self._echo is not None:
             self._echo.record("downlink", pcm)
@@ -409,6 +419,7 @@ class GptLiveSession:
             self._armed = True
             await self._control_input(muted=True)
             await self._set_phase("replying")
+        self._awaiting_result_speech = False
         self.output_audio.extend(pcm)
         await self._on_output_audio(pcm)
         self._arm_idle()
@@ -421,8 +432,11 @@ class GptLiveSession:
         if not self._delegator.begin(delegation_id):
             logger.info("GPT-Live duplicate delegation %s ignored", delegation_id)
             return
+        # Filler TTS may have armed idle; cancel so we do not go idle mid-tool.
+        self._cancel_idle()
         self._busy = True
         self._hold_output = True
+        self._awaiting_result_speech = True
         if self._phase != "replying":
             await self._set_phase("thinking")
         try:
@@ -465,6 +479,16 @@ class GptLiveSession:
         finally:
             self._hold_output = False
             self._busy = False
+            # Keep the turn alive until the model speaks the commentary result.
+            self._cancel_idle()
+            self._awaiting_result_speech = True
+            self._armed = True
+            if self._phase == "idle":
+                await self._set_phase("thinking")
+            elif self._phase == "replying":
+                # Still in filler phase — show thinking until result audio.
+                await self._set_phase("thinking")
+            self._arm_idle()
             if self._close_after_busy:
                 self._close_after_busy = False
                 await self.close()
@@ -528,12 +552,19 @@ class GptLiveSession:
             await asyncio.sleep(self._idle_debounce_s)
         except asyncio.CancelledError:
             return
-        if self._drop_output or self._busy or self._hold_output:
+        if self._drop_output:
             return
-        if self._phase != "replying":
+        # Tool still running — check again after another debounce window.
+        if self._busy or self._hold_output:
+            self._arm_idle()
+            return
+        # After commentary we arm idle once. If result audio arrives first it
+        # clears _awaiting_result_speech and re-arms. If not, fall through idle.
+        if self._phase not in ("replying", "thinking"):
             return
         self._reply_mute = False
         self._armed = False
+        self._awaiting_result_speech = False
         self._input_muted = True
         self._gate.reset()
         await self._control_input(muted=True)
