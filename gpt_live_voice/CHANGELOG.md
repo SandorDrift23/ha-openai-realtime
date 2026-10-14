@@ -2,6 +2,13 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.9.1
+
+- Stop muting the Live mic after short pauses so gpt-live-1 hears natural
+  silence and does not answer half sentences.
+- Keep `replying` across multi-second TTS gaps (default idle debounce 4 s)
+  so the device no longer flaps idle → listening → replying mid-answer.
+
 ## 0.9.0
 
 - Version series aligned with firmware `sandordrift23.gpt-live-voice-pe` `0.9.0`.
