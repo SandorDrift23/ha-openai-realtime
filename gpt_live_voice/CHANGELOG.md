@@ -2,12 +2,20 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.9.2
+
+- Revert the 0.9.1 "stream pauses forever" mic gate. With echo probe it caused
+  a listen→reply loop and no transcripts. Close-on-silence is back (900 ms).
+- Keep a 3 s idle debounce so TTS gaps are less likely to flap mid-answer.
+- For a working conversation now: turn **echo probe off**, update to 0.9.2.
+
 ## 0.9.1
 
 - Stop muting the Live mic after short pauses so gpt-live-1 hears natural
   silence and does not answer half sentences.
 - Keep `replying` across multi-second TTS gaps (default idle debounce 4 s)
   so the device no longer flaps idle → listening → replying mid-answer.
+  (Regressed with echo probe — fixed in 0.9.2.)
 
 ## 0.9.0
 

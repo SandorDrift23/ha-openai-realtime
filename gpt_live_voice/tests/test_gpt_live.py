@@ -61,12 +61,12 @@ def _tone(ms: int, amplitude: int = 8000) -> bytes:
 
 
 async def _say(session) -> None:
-    """Feed speech that opens the gate, then quiet frames that still stream."""
+    """Feed speech that opens the gate, then trailing silence that closes it."""
     clock = {"t": 0.0}
     session._now = lambda: clock["t"]
     await session.on_uplink(_tone(150))
     await session.on_uplink(_tone(100))
-    clock["t"] = 0.8
+    clock["t"] = 1.0
     await session.on_uplink(_tone(20, 0))
 
 
@@ -152,8 +152,6 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(appended), 2)
         # Streaming sends short real-time chunks, not one dumped utterance.
         self.assertLess(len(base64.b64decode(appended[0]["audio"])), 20_000)
-        # Quiet frames after speech still stream (no mute-on-pause).
-        self.assertTrue(self.session._gate.open)
 
         await self.session.handle_server_event({"type": "session.input_transcript.delta", "delta": "lamp"})
         reply = b"\x03\x00\x04\x00"
@@ -228,7 +226,7 @@ class GptLiveTests(unittest.IsolatedAsyncioTestCase):
         })
         self.assertEqual(harness.played, [b"\x01\x00", b"\x02\x00"])
         self.assertNotIn("idle", harness.phases)
-        self.assertGreaterEqual(DEFAULT_IDLE_DEBOUNCE_S, 4.0)
+        self.assertGreaterEqual(DEFAULT_IDLE_DEBOUNCE_S, 3.0)
 
     async def test_dead_socket_does_not_raise_on_every_mic_frame(self):
         lost = {"n": 0}

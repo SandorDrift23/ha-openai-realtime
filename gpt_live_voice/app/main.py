@@ -388,9 +388,9 @@ class Application:
                 f"⚠️ Unknown VOICE_PROVIDER {voice_provider!r}, falling back to gpt_live"
             )
             voice_provider = "gpt_live"
-        # gpt-live-1 TTS often pauses 1.5–3 s between fragments; 1500 ms idle
-        # made the device flap idle→listening→replying mid-answer.
-        idle_default_ms = "4000" if voice_provider == "gpt_live" else "1500"
+        # gpt-live-1 TTS often pauses between fragments; 1500 ms idle flapped
+        # mid-answer. 3000 ms bridges most gaps without feeling stuck.
+        idle_default_ms = "3000" if voice_provider == "gpt_live" else "1500"
         try:
             phase_idle_debounce_ms = int(os.environ.get("PHASE_IDLE_DEBOUNCE_MS", idle_default_ms))
         except (TypeError, ValueError):

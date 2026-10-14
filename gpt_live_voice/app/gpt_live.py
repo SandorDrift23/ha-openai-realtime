@@ -27,15 +27,15 @@ LIVE_URL = "wss://api.openai.com/v1/live/sessions"
 LIVE_MODEL = "gpt-live-1"
 LIVE_SAMPLE_RATE = 24000
 CLOSE_TIMEOUT_S = 15.0
-# Half duplex: drop pre-speech silence, then stream at real time including
-# natural pauses. Dumping a whole utterance at once trips
-# input_audio_rate_limit_exceeded. Closing/muting after a short pause made
-# gpt-live-1 answer half sentences ("Kannst du…").
+# Half duplex: keep silence off the Live socket, then stream at real time.
+# Dumping a whole utterance at once trips input_audio_rate_limit_exceeded.
+# 0.9.1 tried streaming pauses forever; with echo_probe that became a
+# listen→reply loop with no transcripts. Restore close-on-silence.
 SPEECH_RMS = 300
 MIN_SPEECH_MS = 120
-# Live TTS often has 1.5–3 s gaps between audio fragments. Idle must wait
-# longer than that or the device flaps idle → follow-up → replying mid-answer.
-DEFAULT_IDLE_DEBOUNCE_S = 4.0
+END_SILENCE_MS = 900
+# Live TTS can pause between fragments; keep replying a bit longer than 1.5 s.
+DEFAULT_IDLE_DEBOUNCE_S = 3.0
 
 STOP_INSTRUCTION = (
     "The user stopped you. Stop speaking now and wait silently for the next "
@@ -48,9 +48,7 @@ LIVE_INSTRUCTION_SUFFIX = (
     "commentary. Stay silent while that lookup runs, then speak only what "
     "the commentary says. Speak an action as done only after that commentary "
     "confirms it. If the device or action is unclear, ask one short question. "
-    "Wait until the user has clearly finished their full request before you "
-    "answer; do not reply to a half sentence. Keep replies short enough to "
-    "say aloud."
+    "Keep replies short enough to say aloud."
 )
 
 def _rms(pcm: bytes) -> float:
@@ -65,12 +63,11 @@ def _rms(pcm: bytes) -> float:
 
 
 class SpeechGate:
-    """Open the Live mic after speech, then keep streaming (including pauses).
+    """Open the Live mic only after speech, then stream at real time.
 
     Silence before the first loud frames is dropped. Once speech is confirmed,
-    every chunk is forwarded immediately — including quiet gaps — so gpt-live-1
-    native turn detection hears a natural pause instead of an abrupt mute.
-    The gate stays open until the session resets it (wake / interrupt / idle).
+    every chunk is forwarded immediately so OpenAI never sees a burst dump.
+    After a short trailing silence the gate closes again until the next word.
     """
 
     def __init__(
@@ -78,24 +75,27 @@ class SpeechGate:
         sample_rate: int = LIVE_SAMPLE_RATE,
         speech_rms: float = SPEECH_RMS,
         min_speech_ms: int = MIN_SPEECH_MS,
+        end_silence_ms: int = END_SILENCE_MS,
     ):
         self._speech_rms = speech_rms
         self._min_speech_bytes = int(sample_rate * 2 * min_speech_ms / 1000)
+        self._end_silence_s = end_silence_ms / 1000
         self.reset()
 
     def reset(self) -> None:
         self._speech_bytes = 0
+        self._silence_at: Optional[float] = None
         self.heard_speech = False
         self.open = False
 
-    def push(self, pcm: bytes, now: float = 0.0) -> Optional[bytes]:
-        """Return PCM to send now, or None while waiting for the first word."""
-        del now  # kept for call-site compatibility
+    def push(self, pcm: bytes, now: float) -> Optional[bytes]:
+        """Return PCM to send now, or None while the mic should stay closed."""
         if not pcm:
             return None
         loud = _rms(pcm) >= self._speech_rms
         if loud:
             self._speech_bytes += len(pcm)
+            self._silence_at = None
             if not self.open and self._speech_bytes >= self._min_speech_bytes:
                 self.open = True
                 self.heard_speech = True
@@ -105,7 +105,11 @@ class SpeechGate:
         if not self.open:
             self._speech_bytes = 0
             return None
-        # Still in the user's turn — forward silence so Live can end the turn.
+        if self._silence_at is None:
+            self._silence_at = now
+        if (now - self._silence_at) >= self._end_silence_s:
+            self.reset()
+            return None
         return pcm
 
 
@@ -278,7 +282,7 @@ class GptLiveSession:
         await self._control_input(muted=True)
 
     async def on_uplink(self, pcm: bytes) -> None:
-        """Stream speech in real time; drop only silence before the first word."""
+        """Stream speech in real time; drop silence until the user talks."""
         if self._echo is not None and pcm:
             self._echo.record("uplink", pcm)
         if self._hold == "interrupt" or self._reply_mute or self._phase == "replying":
@@ -287,6 +291,10 @@ class GptLiveSession:
         if self._gate.heard_speech and self._phase != "listening":
             await self._set_phase("listening")
         if not chunk:
+            if not self._gate.open and self._armed and self._phase == "listening":
+                # Trailing silence closed the gate — mute Live until the next word.
+                self._input_muted = True
+                await self._control_input(muted=True)
             return
         if not self._armed or self._input_muted:
             self._armed = True
