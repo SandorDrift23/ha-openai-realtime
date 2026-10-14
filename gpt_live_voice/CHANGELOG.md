@@ -2,6 +2,12 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.9.3
+
+- Fix web-search / tool turns cut after the filler: idle no longer fires from
+  filler transcript during delegation, and post-tool answer audio is kept even
+  if idle raced the commentary gap (`context_injection_incomplete`).
+
 ## 0.9.2
 
 - Revert the 0.9.1 "stream pauses forever" mic gate. With echo probe it caused
